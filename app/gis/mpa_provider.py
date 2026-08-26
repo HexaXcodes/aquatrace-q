@@ -76,7 +76,7 @@ class GeoJSONMPAProvider(MPAProvider):
 
         assert best is not None
         feature, distance_m, inside = best
-        protection = feature.properties.get("protection_level") or feature.properties.get("iucn_category")
+        protection = feature.properties.get("protection_level") or feature.properties.get("iucn_cat")
 
         return MPAContext(
             status=self._status_when_found,
