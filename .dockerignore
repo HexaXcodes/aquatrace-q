@@ -1,0 +1,30 @@
+.venv/
+.git/
+.pytest_cache/
+__pycache__/
+**/__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+
+# Runtime data -- volume-mounted at container start, baking them into the
+# image would just be stale/wasted layers.
+uploads/*
+data/*
+outputs/*
+models/*
+!uploads/.gitkeep
+!data/.gitkeep
+!outputs/.gitkeep
+!models/.gitkeep
+
+*.db
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+
+.vscode/
+.idea/
