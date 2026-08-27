@@ -31,6 +31,21 @@ No Redis/Celery service is included — see `docs/processing-pipeline.md`
 project's current scale, and what would need to change if that stops being
 true.
 
+**The container does not read your local `.env` file.** `.dockerignore`
+deliberately excludes it (it shouldn't be baked into an image), and
+`docker-compose.yml`'s `backend` service only sets `DATABASE_URL`, `ENV`,
+and `LOG_LEVEL` as explicit `environment:` overrides — everything else
+(`GIS_ENABLED`, `REEF_DATA_PATH`/`MPA_DATA_PATH`, `QML_*`, the risk/priority
+thresholds, ...) falls back to `config.py`'s class defaults inside the
+container regardless of what your host `.env` says. Confirmed directly:
+enabling GIS locally via `.env` and restarting a local (non-Docker)
+uvicorn flips `reef_status`/`mpa_status` to `OK`; restarting the Docker
+container with the same `.env` on disk does not, because the container
+never sees it. If you want a setting live in the Docker Compose
+deployment, add it to `docker-compose.yml`'s `environment:` block the same
+way `DATABASE_URL` is set — there's no other path env vars get into the
+container.
+
 **Verification status:** build-tested and run end-to-end. `docker compose
 up --build` succeeds; Postgres 16 + PostGIS 3.4.3 come up healthy,
 `CREATE EXTENSION postgis` succeeds, alembic runs both migrations against
