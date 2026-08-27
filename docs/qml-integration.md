@@ -14,11 +14,28 @@ this scale). It has been executed and verified in this environment,
 including `fit`/`predict`/`predict_proba`/`evaluate`/`save`/`load` and a
 save→reload→predict round-trip (see `tests/test_quantum.py`).
 
-## What's left for you
+## Current training status (not yet Shashank's real dataset)
 
-The classifier is **not yet trained on real labelled sonar features** — that
-dataset is yours to build once Shashank's feature pipeline is producing
-real embeddings. Training it:
+`models/quantum_classifier.pkl` has been trained — but on the public
+[Marine Debris FLS Dataset](https://github.com/mvaldenegro/marine-debris-fls-datasets)
+(`scripts/build_fls_training_data.py` + `scripts/train_quantum_classifier.py`),
+not on this project's own labelled data, which doesn't exist yet. Held-out
+accuracy: **75.0%**, genuinely close to the classical classifier's 76.7% on
+the same data — a real classical-vs-quantum comparison point, not a
+synthetic one.
+
+**Do not quote 75% as real-world accuracy.** Same caveat as
+`docs/ml-integration.md`: it's clean benchmark accuracy on pre-cropped,
+centered crops, and live-testing through the full pipeline surfaced a real
+train/serve distribution gap against `FixtureThresholdDetector`'s own
+discovered bounding boxes (see that doc for the concrete examples). The
+honest framing is "75% on a clean benchmark, with a known train/serve gap
+not yet quantified on live-detected crops."
+
+That dataset is still yours to build once Shashank's feature pipeline is
+producing real project-specific embeddings, and once a real `DetectionModel`
+replaces the fixture (which will likely move this number). Training on new
+data:
 
 ```python
 from app.ml.quantum_classifier import QiskitQSVCClassifier

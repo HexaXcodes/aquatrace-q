@@ -66,6 +66,39 @@ automatically on next startup — `is_trained` flips to `True`, and
 `classification_service` starts reporting `run_status = OK` instead of
 `NOT_TRAINED`. No code change needed for this path; it's already wired.
 
+## Current training status (not yet Shashank's real dataset)
+
+`models/classical_classifier.joblib` has been trained — but on the public
+[Marine Debris FLS Dataset](https://github.com/mvaldenegro/marine-debris-fls-datasets)
+(real ARIS Explorer 3000 forward-looking-sonar crops: can/bottle/chain/
+propeller/tire/background), not on this project's own labelled data, which
+doesn't exist yet. `scripts/build_fls_training_data.py` builds the CSV,
+`scripts/train_classical_classifier.py` trains and saves it. This proves the
+training pipeline works end-to-end against real (if generic-benchmark)
+sonar data, and gives `classification_service` something real to report
+instead of `NOT_TRAINED` — it is not a claim that the model is tuned for
+this project's actual reef-debris use case.
+
+**Held-out accuracy on that benchmark: 76.7%.** Do not quote this number as
+"real-world accuracy" anywhere (docs, pitch deck, to judges) — it's clean
+benchmark accuracy on the dataset's own pre-cropped, centered 96x96 images.
+Live-testing it through the actual pipeline surfaced a real train/serve gap:
+the benchmark hands the classifier a clean, human-curated crop, but
+`FixtureThresholdDetector` produces its own tighter, offset bounding box via
+intensity thresholding — a different input distribution than what the model
+was trained on. Confirmed directly: a real tire crop, run through the full
+survey→upload→process pipeline, came back classified as `propeller`; a real
+background crop threw two false debris detections. The honest framing is
+"76.7% on a clean benchmark, with a known train/serve distribution gap not
+yet quantified on live-detected crops" — not "76.7% accurate."
+
+This gap should also be expected to move, in either direction, once a real
+`DetectionModel` (this section) replaces `FixtureThresholdDetector` — the
+mismatch exists specifically because the fixture's discovered boxes don't
+match the benchmark's curation convention, and a real trained detector may
+behave quite differently. Worth keeping in mind rather than being
+surprised when the number changes later.
+
 ## Feature versioning
 
 Every `FeatureVector` and `ClassificationRecord` records `feature_version`.

@@ -205,10 +205,14 @@ existing adapter interface.
 10. ✅ All model/GIS/QML adapters verified replaceable — demonstrated by a
     test that registers a freshly-trained fixture classifier via
     monkeypatch and confirms the `OK` path updates the target correctly,
-    **and** by manually training and registering a toy classifier plus
-    real reef/MPA GeoJSON fixtures against a live server, confirming
-    `NOT_TRAINED`→`OK` and `NOT_CONFIGURED`→`OK` transitions actually
-    happen outside of pytest too.
+    **and** by actually training both classifiers on a real public sonar
+    dataset (`docs/ml-integration.md` / `docs/qml-integration.md` —
+    76.7%/75.0% held-out accuracy, plus a real reef/MPA GeoJSON fixture)
+    against a live server, confirming `NOT_TRAINED`→`OK` and
+    `NOT_CONFIGURED`→`OK` transitions actually happen outside of pytest
+    too. Those accuracy numbers are benchmark, not deployment, numbers —
+    see the linked docs for the known train/serve gap before quoting them
+    anywhere.
 11. ✅ API schemas stable — Phase 1-5's 8 original tests pass unchanged.
 12. ✅ README commands verified to actually work (venv creation, pip
     install, alembic, app import, route listing, test run, **and** the
