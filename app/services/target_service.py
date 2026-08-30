@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import TargetNotFoundError
 from app.core.logging import get_logger
 from app.models.detection import Detection
-from app.models.enums import TargetClass
+from app.models.enums import KNOWN_DEBRIS_SUBCLASSES, TargetClass
 from app.models.target import Target
 
 logger = get_logger(__name__)
@@ -21,6 +21,15 @@ _CLASS_NAME_MAP: dict[str, TargetClass] = {
     "ANTHROPOGENIC": TargetClass.ANTHROPOGENIC,
     "UNCERTAIN": TargetClass.UNCERTAIN,
 }
+
+# A detector may emit a specific debris subclass directly as class_name
+# (e.g. E004ShipwreckDetector emits "shipwreck") rather than one of the
+# three coarse labels above. Known subclasses still resolve to
+# ANTHROPOGENIC so they aren't lost to the UNCERTAIN fallback below --
+# "unknown" is deliberately excluded since it carries no such signal.
+_SUBCLASS_CLASS_NAMES = frozenset(KNOWN_DEBRIS_SUBCLASSES) - {"natural_seabed", "unknown"}
+for _subclass in _SUBCLASS_CLASS_NAMES:
+    _CLASS_NAME_MAP.setdefault(_subclass, TargetClass.ANTHROPOGENIC)
 
 
 def create_targets_from_detections(db: Session, detections: list[Detection]) -> list[Target]:
@@ -40,6 +49,11 @@ def create_targets_from_detections(db: Session, detections: list[Detection]) -> 
             survey_id=detection.survey_id,
             detection_id=detection.id,
             classification=coarse_class,
+            # Bootstrap value from the detector's own class signal, when it
+            # named a specific subclass -- overwritten by
+            # classification_service once the classical classifier runs (if
+            # trained), same as every other target.
+            debris_subclass=detection.class_name if detection.class_name in _SUBCLASS_CLASS_NAMES else None,
             confidence=detection.confidence,
             bbox=detection.bbox,
             mask_path=detection.mask_path,

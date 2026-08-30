@@ -24,21 +24,41 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.core.logging import get_logger
 from app.ml.base import DetectionModel
 from app.ml.classical_classifier import ClassicalClassifier, SklearnClassicalClassifier
 from app.ml.detection_model import FixtureThresholdDetector
 from app.ml.quantum_classifier import QiskitQSVCClassifier, QiskitUnavailableError, QuantumClassifier
+
+logger = get_logger(__name__)
+
+_E004_CHECKPOINT_NAME = "E004_best.pt"
 
 
 @lru_cache
 def get_detection_model() -> DetectionModel:
     """Returns the currently registered detection model.
 
-    Today: `FixtureThresholdDetector`, a real (if crude) classical CV
-    detector -- see its docstring for why this is an honest stand-in
-    rather than fabricated output. Swap this function's body to return
-    a real trained model once Shaun/Shashank register one.
+    Mirrors `get_classical_classifier()`'s gating: if a trained E004
+    checkpoint (`MODEL_DIRECTORY/E004_best.pt`) is present, load and
+    return the real `E004ShipwreckDetector`. Otherwise (checkpoint
+    missing, or torch not importable in this environment) fall back to
+    `FixtureThresholdDetector` -- a real (if crude) classical CV
+    detector, never a fabricated prediction. Tests redirect
+    `MODEL_DIRECTORY` to an empty tmp dir (see `tests/conftest.py`), so
+    they exercise the fixture path unless they explicitly place a
+    checkpoint there.
     """
+    settings = get_settings()
+    checkpoint_path = settings.MODEL_DIRECTORY / _E004_CHECKPOINT_NAME
+    if checkpoint_path.exists():
+        try:
+            from app.ml.e004_detector import E004ShipwreckDetector, TorchUnavailableError
+
+            return E004ShipwreckDetector(checkpoint_path=checkpoint_path)
+        except TorchUnavailableError as exc:
+            logger.warning("e004_detector_unavailable", extra={"reason": str(exc)})
+
     return FixtureThresholdDetector()
 
 

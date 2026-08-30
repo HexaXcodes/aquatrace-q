@@ -23,7 +23,7 @@ Nothing in between.
 
 | Component | Status |
 |---|---|
-| Detection | Real (crude) classical CV: intensity thresholding + connected components on the actual uploaded image. Clearly named `fixture-threshold-detector`, not presented as a trained model. |
+| Detection | **Real trained model by default**: `E004ShipwreckDetector`, a Compact U-Net (1.9M params) binary segmentation model, Mean Dice 0.677 (see `docs/ml-integration.md` for the honest small-shipwreck caveat and a real train/serve gap it surfaced). Falls back to the classical-CV `fixture-threshold-detector` (intensity thresholding + connected components) only if `models/E004_best.pt` is absent or torch isn't importable. |
 | Feature extraction | Real image statistics (intensity, texture, shape, shadow proxy), computed from real pixels. |
 | Classical classifier | Real, trainable scikit-learn classifier. **Untrained by default** → reports `NOT_TRAINED`, never a fabricated prediction. |
 | Quantum classifier | **Real Qiskit pipeline** (ZZFeatureMap → FidelityQuantumKernel → QSVC), verified executing end-to-end incl. save/load. **Untrained by default** → reports `NOT_TRAINED`. |

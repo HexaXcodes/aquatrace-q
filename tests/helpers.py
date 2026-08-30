@@ -31,6 +31,27 @@ def synthetic_sonar_png(width: int = 200, height: int = 150, n_blobs: int = 3) -
     return buffer
 
 
+def shipwreck_like_array(
+    width: int, height: int, *, cx: int, cy: int, length: int = 100, half_width: int = 30, seed: int = 11
+) -> np.ndarray:
+    """A grayscale array: mottled seabed background with one elongated
+    bright/dark "hull + acoustic shadow" ellipse pair, closer to a real
+    side-scan sonar shipwreck signature than the flat squares in
+    `synthetic_sonar_png()` (which only needs to trip a simple intensity
+    threshold, not a shape-aware segmentation model). Verified against
+    the real E004 checkpoint to actually fire (see docs/ml-integration.md)."""
+    rng = np.random.default_rng(seed)
+    background = rng.normal(loc=70, scale=8, size=(height, width)).clip(0, 255)
+
+    yy, xx = np.mgrid[0:height, 0:width]
+    hull = ((xx - cx) ** 2) / (length**2) + ((yy - cy) ** 2) / (half_width**2) <= 1
+    shadow = ((xx - (cx + length // 2)) ** 2) / (length**2) + ((yy - cy) ** 2) / (half_width**2) <= 1
+
+    background[hull] = np.clip(background[hull] + 140, 0, 255)
+    background[shadow & ~hull] = np.clip(background[shadow & ~hull] - 40, 0, 255)
+    return background.astype(np.uint8)
+
+
 def create_uploaded_survey(
     client: TestClient,
     name: str = "Test Survey",
