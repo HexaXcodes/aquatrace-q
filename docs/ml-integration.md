@@ -85,6 +85,15 @@ stitches per-tile detections back into original-image pixel coordinates.
 This preserves native pixel scale but means an object straddling a tile
 boundary can be split into two detections — a known limitation on top of
 the small-shipwreck one below, not yet mitigated with overlapping tiles.
+**Confirmed, not just theoretical:** a single synthetic shipwreck-shaped
+blob centered exactly on a tile boundary (x=1024 in a 2048x1024 test image)
+came back as two separate `RawDetection`s, `[925, 482, 1024, 542]` and
+`[1024, 481, 1126, 544]` (confidence 0.943 and 0.988) — both bboxes meet
+exactly at the seam, confirming this is a tiling artifact and not two real
+objects. Low risk in practice for AI4Shipwrecks-scale imagery (most sonar
+tiles are already ≤1024px on a side, so most real uploads never tile at
+all), but worth knowing before a demo uses an image large enough to trigger
+it.
 
 **Real validated metrics** (measured by the model's authors; see
 `Shipwreck_TrainedModel/E004_AADVIK_HANDOFF/README.md` — cited here, not
@@ -141,6 +150,18 @@ classifier — Shashank's dataset to supply — or a product decision about
 whether `classification_service` should ever downgrade a detector's own
 class signal); flagging it clearly instead of silently letting E004's
 signal get thrown away.
+
+**Next step:** the classical (and quantum) classifier training data needs a
+labelled "shipwreck" class before E004's detections can survive the
+CLASSIFYING stage. This is no longer a hypothetical gap in the training
+vocabulary — it's now demonstrated, reproducible behavior with a concrete
+before/after (E004 finds it at 0.987 confidence; classification stage
+erases it to `NATURAL_SEABED` seconds later), which makes it the strongest
+concrete case for prioritizing real shipwreck-labelled training data over
+further FLS-benchmark work. Until that data exists, do not assume a
+"shipwreck" `Detection` survives as a "shipwreck" `Target` — verify against
+`ClassificationRecord` / the CLASSIFYING stage log for any target you're
+about to report on.
 
 ## 2. Feature extraction
 
