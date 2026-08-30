@@ -181,6 +181,66 @@ different problems: the overwrite behavior is an architecture bug (fixed);
 the classifier not recognizing real shipwrecks is a training-data gap
 (open, and this is now the strongest concrete case for prioritizing it).
 
+**A "the fix doesn't work" report was investigated and NOT reproduced --
+read this before assuming the fix above is broken.** A follow-up report
+claimed the protection above wasn't engaging at all: 5 real shipwreck
+targets in a live server, all still overwritten to `natural_seabed` or
+`propeller` with no protective `note`. Investigated by re-reading
+`_detector_protected_class()`/`known_classes` fresh against the live repo
+(unchanged since the fix commit), then reproducing live four separate
+ways: (1) a single target through the real `classify_target()` call path,
+(2) five targets in one survey (matching the report's count) walked
+through the same service calls `processing_service` uses, (3) five targets
+through the actual `POST /surveys/{id}/process` API end-to-end via
+`TestClient`, and (4) the same, again, over real HTTP against a genuinely
+separate, already-running `uvicorn app.main:app` process (found already
+listening on port 8000 -- not one started for this investigation) rather
+than `TestClient`'s in-process ASGI transport. **All four protected
+correctly, every time** -- `debris_subclass` stayed `"shipwreck"`, the
+classical record's `note` correctly explained why it wasn't applied. No
+code defect was found despite deliberately trying to break it on the exact
+reported shape (multiple targets, one survey, one classify loop) and on a
+real socket server, not just an in-process test client.
+
+The timeline points to the actual explanation: the report's failing survey
+was processed *6 minutes after* a verification run that succeeded on the
+same on-disk code, both hours before the fix was even `git commit`-ed (the
+commit just records already-working, already-tested code -- committing is
+not what made it work). The only thing that plausibly differs between "a
+freshly-started process" (which always re-imports the current file) and
+"a request handled by a long-running `uvicorn app.main:app` process that
+was already running before the fix was written" is that **Python does not
+hot-reload edited source files in an already-running process** -- a server
+started before an edit keeps executing the old bytecode for that module
+until it's restarted (or run with `--reload`), regardless of what's on
+disk. If you're testing a backend code change against a server you started
+earlier in the session, **restart it** (or run with `uvicorn app.main:app
+--reload` during development) before concluding a fix doesn't work.
+
+This can't be fully proven after the fact (the specific process that
+served that request is gone), so it's presented as the best-supported
+explanation from the evidence available, not a certainty -- if it
+recurs against a server confirmed to have been restarted after this
+commit, that's a real bug and should be reported again with that
+confirmation included. New regression coverage either way:
+`tests/test_features_classification.py::test_protection_holds_against_the_real_registered_classifier`
+exercises the *real* `model_registry.get_classical_classifier()` path
+against the actually-loaded `models/classical_classifier.joblib` (skipped
+if that gitignored artifact isn't present), closing the gap between "a
+hand-built classifier in a test" and "what a real server actually loads"
+that the two tests above didn't cover.
+
+**Quantum was never in scope for this protection, and that's correct, not
+a gap.** The same report noted quantum predictions
+(`natural_seabed`/`can`/`natural_seabed`) also showing up for these
+targets. By design, predating this fix entirely, `_run_quantum()`'s result
+is *never* written to `Target` in either the pre-fix or post-fix code --
+only `_apply_classical_result_to_target()` (classical-only) ever mutates
+`Target.classification`/`.debris_subclass`. Quantum's `ClassificationRecord`
+rows showing up alongside classical's are exactly the intended behavior
+(comparison data point, never authoritative -- see this file's top
+docstring and spec section 17/49), not evidence of a second overwrite bug.
+
 ## 2. Feature extraction
 
 `FeatureExtractor` in `app/ml/feature_extractor.py`. The currently-registered

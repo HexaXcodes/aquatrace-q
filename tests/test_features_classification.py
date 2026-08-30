@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.helpers import create_uploaded_survey
@@ -212,6 +216,71 @@ def test_classifier_can_overwrite_once_it_knows_the_detector_class(client: TestC
     assert classical_record.note is None  # nothing to explain -- applied normally
     assert target.debris_subclass == classical_record.predicted_class
     assert target.uncertainty is not None  # computed normally, since the result was applied
+
+
+def test_protection_holds_against_the_real_registered_classifier(client: TestClient, monkeypatch, tmp_path) -> None:
+    """The two tests above use a classifier hand-built in-process via
+    SklearnClassicalClassifier -- they prove _detector_protected_class()'s
+    *logic* is right, but not that it engages through the real
+    model_registry.get_classical_classifier() path with an actually-loaded
+    `models/classical_classifier.joblib` on disk, which is what production
+    (and any real dev-server run) actually calls. That gap matters: a bug
+    report once claimed this protection wasn't engaging in a live server --
+    investigation found no code defect (this exact scenario, run fresh,
+    protects correctly every time -- see docs/ml-integration.md for the
+    live evidence and the stale-process theory that actually explained it),
+    but "prove it against the real registry, not just a hand-built
+    classifier" was a legitimate gap in coverage regardless of that
+    particular report's root cause, so closing it here."""
+    real_model_path = Path(__file__).resolve().parents[1] / "models" / "classical_classifier.joblib"
+    if not real_model_path.exists():
+        pytest.skip(f"Real classical classifier not present at {real_model_path} (gitignored trained artifact)")
+
+    from app.core.config import Settings, get_settings
+    from app.ml.model_registry import get_classical_classifier, reset_registry_cache
+
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    shutil.copy(real_model_path, model_dir / "classical_classifier.joblib")
+
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    monkeypatch.setenv("MODEL_DIRECTORY", str(model_dir))
+    get_settings.cache_clear()
+    reset_registry_cache()
+    try:
+        classifier = get_classical_classifier()
+        assert classifier.is_trained
+        # This is the exact real-world precondition for the protection to
+        # matter: the actually-trained classifier's vocabulary does not
+        # include "shipwreck" at all (see docs/ml-integration.md's FLS
+        # benchmark note). If this assertion ever fails, it means real
+        # shipwreck-labelled training data has landed -- see the mirror
+        # test above for what should happen then.
+        assert "shipwreck" not in classifier.known_classes
+
+        survey = create_uploaded_survey(client, "Real Registry Protection Survey")
+        from app.db.session import get_session_factory
+        from app.models.survey import Survey
+        from app.services import classification_service, feature_service
+
+        db = get_session_factory()()
+        try:
+            survey_row = db.get(Survey, survey["id"])
+            target = _make_shipwreck_target(db, survey_row)
+            feature_vector = feature_service.extract_and_store_features(db, target, survey_row)
+            classical_record, _ = classification_service.classify_target(db, target, feature_vector)
+            db.refresh(target)
+        finally:
+            db.close()
+
+        assert classical_record.run_status.value == "OK"
+        assert classical_record.note is not None and "shipwreck" in classical_record.note
+        assert target.debris_subclass == "shipwreck"
+        assert target.classification.value == "ANTHROPOGENIC"
+        assert target.confidence == 0.987
+    finally:
+        get_settings.cache_clear()
+        reset_registry_cache()
 
 
 def test_uncertainty_high_for_close_probabilities() -> None:
