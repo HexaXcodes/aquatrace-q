@@ -63,6 +63,18 @@ class ClassicalClassifier(abc.ABC):
     feature_version: str = "unknown"
     is_trained: bool = False
 
+    @property
+    @abc.abstractmethod
+    def known_classes(self) -> list[str]:
+        """The classes this classifier was actually trained on (empty until
+        `fit()`/`load()`). Not a fixed enum -- whatever labels were in the
+        training data, so this reflects the real trained vocabulary rather
+        than an assumed one. Used by `classification_service` to tell
+        whether this classifier is even capable of confirming or overriding
+        a detector-provided class (see the classification-overwrite fix in
+        `docs/ml-integration.md`)."""
+        raise NotImplementedError
+
     @abc.abstractmethod
     def fit(self, X: np.ndarray, y: list[str]) -> None: ...
 
@@ -90,6 +102,14 @@ class SklearnClassicalClassifier(ClassicalClassifier):
         self.model_version = model_version
         self._classes: list[str] = []
         self.is_trained = False
+
+    @property
+    def known_classes(self) -> list[str]:
+        # str(cls) rather than list(self._classes): sklearn's .classes_ is a
+        # numpy string array, so its elements are numpy.str_ -- which
+        # compares/hashes equal to plain str but reprs as `np.str_('...')`,
+        # which would leak into ClassificationRecord.note's f-string below.
+        return [str(cls) for cls in self._classes]
 
     def fit(self, X: np.ndarray, y: list[str]) -> None:
         self._estimator.fit(X, y)

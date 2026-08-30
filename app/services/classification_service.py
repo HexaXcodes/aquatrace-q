@@ -9,11 +9,26 @@ attempted -- including rows whose `run_status` is `NOT_TRAINED` or
 fabricated guess.
 
 `Target.classification` / `.confidence` / `.debris_subclass` /
-`.uncertainty` are updated from the **classical** result only. The
-quantum result is stored purely as a comparison data point (spec
-section 17/49: quantum classifies with an uncertainty estimate, it does
-not unilaterally become the system's ecological-risk input, and no
-quantum-advantage claim is made anywhere in this service).
+`.uncertainty` are updated from the **classical** result only -- UNLESS
+the target's classification came from a detector with its own narrow,
+purpose-built class signal (e.g. `E004ShipwreckDetector` only ever
+emits "shipwreck") that the classical classifier was never trained to
+recognize at all. See `_detector_protected_class()`: a classifier can't
+meaningfully confirm or override a class it has no training examples
+for, so forcing its closed-set prediction onto the target would just be
+a confident wrong guess, not a real disagreement -- confirmed live
+against a real shipwreck image (see docs/ml-integration.md), where the
+classifier landed on `natural_seabed` at "100% confidence" for a target
+E004 had itself flagged as a shipwreck. The classical (and quantum)
+result is always still written to `ClassificationRecord` in full either
+way -- this only changes what gets promoted to `Target`, never what's
+visible via `GET /targets/{id}/classification`.
+
+The quantum result is never promoted to `Target` either way -- it's
+stored purely as a comparison data point (spec section 17/49: quantum
+classifies with an uncertainty estimate, it does not unilaterally
+become the system's ecological-risk input, and no quantum-advantage
+claim is made anywhere in this service).
 """
 
 from __future__ import annotations
@@ -22,6 +37,7 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
+from app.ml.classical_classifier import ClassicalClassifier
 from app.ml.model_registry import get_classical_classifier, get_quantum_classifier
 from app.models.classification import ClassificationRecord
 from app.models.enums import ModelRunStatus, ModelStage, TargetClass
@@ -34,6 +50,36 @@ logger = get_logger(__name__)
 _SUBCLASS_TO_TARGET_CLASS: dict[str, TargetClass] = {
     "natural_seabed": TargetClass.NATURAL_SEABED,
 }
+
+
+def _detector_protected_class(target: Target, classifier: ClassicalClassifier) -> str | None:
+    """Returns the detector-provided subclass name if it should be
+    protected from being overwritten by `classifier`'s prediction, or
+    `None` if classification should proceed as normal.
+
+    `target.debris_subclass` is seeded at target-creation time
+    (`target_service.create_targets_from_detections`) from the
+    originating detector's own `class_name`, when that detector emitted
+    a specific `KNOWN_DEBRIS_SUBCLASSES` value rather than a coarse
+    ANTHROPOGENIC/UNCERTAIN label -- see `_SUBCLASS_CLASS_NAMES` there.
+    Nothing else writes to it before this stage runs, so at this point
+    it's exactly that bootstrap signal, still intact.
+
+    If `classifier.known_classes` (its *actual* trained vocabulary, not
+    an assumed one) doesn't include that subclass at all, the
+    classifier is structurally incapable of ever confirming or
+    correctly overriding it -- it was never shown a single training
+    example of that class, so any prediction it makes here is a
+    closed-set guess among classes it *does* know, not a real, informed
+    disagreement. Once real examples of that subclass exist in the
+    classifier's training data (`known_classes` will include it), this
+    naturally stops applying and the classifier's judgment is trusted
+    again -- no further code change needed here when that data arrives.
+    """
+    subclass = target.debris_subclass
+    if not subclass or subclass in classifier.known_classes:
+        return None
+    return subclass
 
 
 def classify_target(
@@ -49,7 +95,22 @@ def classify_target(
     quantum_record = _run_quantum(db, target, feature_vector, X)
 
     if classical_record.run_status in (ModelRunStatus.OK, ModelRunStatus.TEST_FIXTURE):
-        _apply_classical_result_to_target(db, target, classical_record)
+        classifier = get_classical_classifier()
+        protected_subclass = _detector_protected_class(target, classifier)
+        if protected_subclass is not None:
+            classical_record.note = (
+                f"NOT applied to target: classifier's trained vocabulary "
+                f"{sorted(classifier.known_classes)} does not include "
+                f"'{protected_subclass}', the detecting model's own class "
+                f"signal -- kept as Target.debris_subclass/classification "
+                f"instead of being overwritten by this (structurally "
+                f"uninformed) prediction. See predicted_class/probabilities "
+                f"above for the classifier's opinion, recorded for "
+                f"transparency only."
+            )
+            db.add(classical_record)
+        else:
+            _apply_classical_result_to_target(db, target, classical_record)
 
     db.commit()
     db.refresh(target)

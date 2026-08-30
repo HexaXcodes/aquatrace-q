@@ -118,50 +118,68 @@ specifically and did *worse* overall — best Dice 0.594 vs. E004's 0.677 —
 which is why E004, not E005, is the handoff model. See the handoff
 README's "E005 NOTE" section.)
 
-**A gap this integration surfaced, not fixed — read this before assuming
-"shipwreck" detections stay labelled "shipwreck":** `E004ShipwreckDetector`
-emits `class_name="shipwreck"` on each `RawDetection`, and
-`target_service.create_targets_from_detections()` was extended (see its
-`_SUBCLASS_CLASS_NAMES` map) to seed the new `Target.debris_subclass` with
-that value at creation time. But `classification_service._apply_classical_result_to_target()`
-**unconditionally overwrites** `Target.classification` /
-`.debris_subclass` with whatever the classical classifier predicts, once
-that classifier is trained (`run_status in {OK, TEST_FIXTURE}`) — by
-design, per that module's own docstring ("updated from the classical
-result only"). The currently-trained `models/classical_classifier.joblib`
-was fit on the public Marine Debris FLS benchmark (`background`, `tire`,
-`chain`, `propeller`, `can`, `bottle` — see the "Current training status"
-section below): **it has never seen a "shipwreck" example and cannot
-predict that label.** Confirmed live: running a real synthetic
-shipwreck-shaped image through the full survey→upload→process pipeline
-with E004 registered, the DETECTING stage correctly found it
-(`class_name="shipwreck"`, `confidence=0.987`, a tight bbox around the
-painted shape) — but the CLASSIFYING stage then overwrote the target to
-`classification=NATURAL_SEABED`, `debris_subclass="natural_seabed"`,
-which `priority_service.compute_priority()`'s `is_confident_natural` check
-would then route to `IGNORE`. This isn't a bug introduced by this
-integration — every detector's bootstrap classification has always been
-subject to being overwritten this way, including `FixtureThresholdDetector`'s
-generic `"ANTHROPOGENIC"` — but E004 is the first detector to emit a
-*specific, meaningful* subclass, which makes the loss visible and
-consequential for the first time. Fixing it is out of scope here (it needs
-either real shipwreck-labelled feature training data for the classical
-classifier — Shashank's dataset to supply — or a product decision about
-whether `classification_service` should ever downgrade a detector's own
-class signal); flagging it clearly instead of silently letting E004's
-signal get thrown away.
+**A gap this integration surfaced — the architecture-level half is now
+fixed; the underlying data gap is not, and is a separate problem.**
+`E004ShipwreckDetector` emits `class_name="shipwreck"` on each
+`RawDetection`, and `target_service.create_targets_from_detections()`
+seeds the new `Target.debris_subclass` with that value at creation time
+(see its `_SUBCLASS_CLASS_NAMES` map). Originally,
+`classification_service._apply_classical_result_to_target()`
+**unconditionally overwrote** `Target.classification` / `.debris_subclass`
+with whatever the classical classifier predicted, once that classifier was
+trained — by design, per that module's docstring ("updated from the
+classical result only"). The currently-trained
+`models/classical_classifier.joblib` was fit on the public Marine Debris
+FLS benchmark (`background`, `tire`, `chain`, `propeller`, `can`, `bottle`
+— see "Current training status" below): it has never seen a "shipwreck"
+example and cannot predict that label. Confirmed live, twice,
+independently: once here against a synthetic shipwreck-shaped test image
+(DETECTING found it at `class_name="shipwreck"`, confidence 0.987, a tight
+bbox; CLASSIFYING then overwrote the target to
+`classification=NATURAL_SEABED` at 100% reported confidence), and
+separately by report against a real NOAA sonar image (SS Robert E. Lee) —
+same failure mode, live in the actual UI: Target Details showed
+"NATURAL_SEABED, 100.0% confidence" for a target E004 had itself flagged
+as a shipwreck detection. A textbook closed-set classification failure —
+the classifier was never given an "unknown/out-of-distribution" option, so
+it forces a confident guess among the 6 classes it does know — which
+`priority_service`'s `is_confident_natural` check would then route
+straight to `IGNORE`.
 
-**Next step:** the classical (and quantum) classifier training data needs a
-labelled "shipwreck" class before E004's detections can survive the
-CLASSIFYING stage. This is no longer a hypothetical gap in the training
-vocabulary — it's now demonstrated, reproducible behavior with a concrete
-before/after (E004 finds it at 0.987 confidence; classification stage
-erases it to `NATURAL_SEABED` seconds later), which makes it the strongest
-concrete case for prioritizing real shipwreck-labelled training data over
-further FLS-benchmark work. Until that data exists, do not assume a
-"shipwreck" `Detection` survives as a "shipwreck" `Target` — verify against
-`ClassificationRecord` / the CLASSIFYING stage log for any target you're
-about to report on.
+**Fixed:** `classification_service.py` now has
+`_detector_protected_class(target, classifier)`, checked before
+`_apply_classical_result_to_target()` runs. It compares the target's
+detector-seeded `debris_subclass` against `classifier.known_classes` — the
+classifier's *actual* trained vocabulary (`ClassicalClassifier.known_classes`,
+new abstract property), not an assumed one. If the classifier's vocabulary
+doesn't include that subclass at all, its prediction is structurally
+uninformed (it has zero training examples of that class) rather than a
+real disagreement, so `Target.classification/debris_subclass/confidence`
+are left as the detector reported instead of being overwritten. The
+classical (and quantum) result is **always still written to
+`ClassificationRecord` in full**, with a `note` explaining why it wasn't
+promoted — nothing about this fix hides the disagreement, it only changes
+which one is authoritative on `Target`. This self-corrects automatically
+the moment the classifier's training data grows to include a real
+"shipwreck" example (`known_classes` would then include it, and
+`_detector_protected_class` naturally stops applying) — no further code
+change needed here when that data arrives. Regression coverage:
+`tests/test_features_classification.py::test_classifier_cannot_overwrite_a_class_it_was_never_trained_on`
+and its mirror-image
+`::test_classifier_can_overwrite_once_it_knows_the_detector_class`.
+
+**Still open — a data problem, not a code problem:** the classical (and
+quantum) classifier training data needs a labelled "shipwreck" class before
+its prediction can ever be *correct* for shipwreck targets, not merely
+non-overwriting. Until Shashank's dataset supplies real shipwreck-labelled
+examples, expect every "shipwreck" target's `ClassificationRecord` to keep
+showing a confident-but-wrong classical guess (`natural_seabed` or
+whichever of the 6 FLS classes scores highest) — now correctly recorded as
+non-authoritative instead of silently becoming the target's classification,
+but still not an accurate classical opinion about shipwrecks. These are two
+different problems: the overwrite behavior is an architecture bug (fixed);
+the classifier not recognizing real shipwrecks is a training-data gap
+(open, and this is now the strongest concrete case for prioritizing it).
 
 ## 2. Feature extraction
 
