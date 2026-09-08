@@ -16,6 +16,7 @@ class DetectionRead(BaseModel):
     mask_path: str | None = None
     class_name: str
     confidence: float
+    requires_manual_review: bool | None = None
     model_name: str
     model_version: str
     inference_time_ms: float | None = None

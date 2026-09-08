@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -41,6 +41,14 @@ class Detection(Base):
     # UNCERTAIN plus open-ended subclasses must be addable without a migration.
     class_name: Mapped[str] = mapped_column(String(64), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # NULL means the producing model has no declared confidence-band
+    # policy for this (e.g. E004, FixtureThresholdDetector) -- NOT "false,
+    # reviewed and cleared." Only set (True/False) by models that declare
+    # one, e.g. YoloDebrisDetector from its own model_contract.json. Kept
+    # deliberately separate from Target.uncertainty (classifier-
+    # probability entropy, a different question) -- see app/ml/base.py.
+    requires_manual_review: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
     model_version: Mapped[str] = mapped_column(String(64), nullable=False)

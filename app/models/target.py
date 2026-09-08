@@ -19,7 +19,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, JSON, String, func
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, JSON, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -47,6 +47,13 @@ class Target(Base):
     debris_subclass: Mapped[str | None] = mapped_column(String(64), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     uncertainty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Seeded once from the originating Detection at target-creation time
+    # (see target_service.create_targets_from_detections) and never
+    # touched again -- a detector-confidence-band fact, not something
+    # classification/uncertainty stages recompute. NULL means the
+    # originating detector declared no such policy; see Detection's own
+    # field docstring for the None-vs-False distinction.
+    requires_manual_review: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     # --- Geometry ------------------------------------------------------------
     bbox: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)

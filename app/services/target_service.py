@@ -55,6 +55,7 @@ def create_targets_from_detections(db: Session, detections: list[Detection]) -> 
             # trained), same as every other target.
             debris_subclass=detection.class_name if detection.class_name in _SUBCLASS_CLASS_NAMES else None,
             confidence=detection.confidence,
+            requires_manual_review=detection.requires_manual_review,
             bbox=detection.bbox,
             mask_path=detection.mask_path,
         )

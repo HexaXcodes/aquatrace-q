@@ -12,6 +12,7 @@ class ReportRowSchema(BaseModel):
     debris_subclass: str | None = None
     confidence: float | None = None
     uncertainty: float | None = None
+    requires_manual_review: bool | None = None
     latitude: float | None = None
     longitude: float | None = None
     coordinate_source: str | None = None

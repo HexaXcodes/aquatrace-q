@@ -20,6 +20,7 @@ class TargetRead(BaseModel):
     debris_subclass: str | None = None
     confidence: float | None = None
     uncertainty: float | None = None
+    requires_manual_review: bool | None = None
 
     bbox: list[float] | None = None
     mask_path: str | None = None

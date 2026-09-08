@@ -32,6 +32,7 @@ _CSV_FIELDS = [
     "debris_subclass",
     "confidence",
     "uncertainty",
+    "requires_manual_review",
     "latitude",
     "longitude",
     "coordinate_source",
@@ -60,6 +61,7 @@ class ReportRow:
     debris_subclass: str | None
     confidence: float | None
     uncertainty: float | None
+    requires_manual_review: bool | None
     latitude: float | None
     longitude: float | None
     coordinate_source: str | None
@@ -129,6 +131,7 @@ def generate_survey_report(db: Session, survey: Survey) -> SurveyReport:
                 debris_subclass=target.debris_subclass,
                 confidence=target.confidence,
                 uncertainty=target.uncertainty,
+                requires_manual_review=target.requires_manual_review,
                 latitude=target.latitude,
                 longitude=target.longitude,
                 coordinate_source=target.coordinate_source.value if target.coordinate_source else None,
