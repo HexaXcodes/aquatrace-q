@@ -118,14 +118,18 @@ def test_predict_on_multi_tile_image_stitches_global_coordinates(tmp_path, setti
     assert any(d.bbox[0] <= cx <= d.bbox[2] and d.bbox[1] <= cy <= d.bbox[3] for d in detections)
 
 
-def test_registered_as_default_when_checkpoint_present(tmp_path, monkeypatch) -> None:
+def test_registered_as_shipwreck_specialist_when_checkpoint_present(tmp_path, monkeypatch) -> None:
+    """E004 moved from the general get_detection_model() slot to its own
+    get_shipwreck_detection_model() slot when the YOLO11s debris/gear
+    detector was integrated as the new general-purpose default -- see
+    app/ml/model_registry.py's module docstring."""
     if not _CHECKPOINT_PATH.exists():
         pytest.skip(f"E004 checkpoint not present at {_CHECKPOINT_PATH} (gitignored handoff artifact)")
 
     import shutil
 
     from app.core.config import Settings, get_settings
-    from app.ml.model_registry import get_detection_model, reset_registry_cache
+    from app.ml.model_registry import get_shipwreck_detection_model, reset_registry_cache
 
     model_dir = tmp_path / "models"
     model_dir.mkdir()
@@ -136,17 +140,29 @@ def test_registered_as_default_when_checkpoint_present(tmp_path, monkeypatch) ->
     get_settings.cache_clear()
     reset_registry_cache()
     try:
-        model = get_detection_model()
+        model = get_shipwreck_detection_model()
+        assert model is not None
         assert model.model_name == "e004-unet-shipwreck-segmentation"
     finally:
         get_settings.cache_clear()
         reset_registry_cache()
 
 
-def test_falls_back_to_fixture_when_checkpoint_absent() -> None:
+def test_shipwreck_slot_is_none_when_checkpoint_absent() -> None:
     """`tests/conftest.py`'s autouse fixture already redirects
     MODEL_DIRECTORY to an empty tmp dir for every test -- this just makes
-    that fallback behavior an explicit, named assertion."""
+    that fallback behavior an explicit, named assertion. Unlike the
+    general get_detection_model() slot, the shipwreck specialist slot has
+    no fixture fallback -- it's just None."""
+    from app.ml.model_registry import get_shipwreck_detection_model
+
+    assert get_shipwreck_detection_model() is None
+
+
+def test_general_slot_falls_back_to_fixture_when_yolo_checkpoint_absent() -> None:
+    """get_detection_model() (the general-purpose slot) now gates on the
+    YOLO11s debris/gear checkpoint, not E004 -- still falls back to
+    FixtureThresholdDetector when that's absent, same as before."""
     from app.ml.detection_model import FixtureThresholdDetector
     from app.ml.model_registry import get_detection_model
 

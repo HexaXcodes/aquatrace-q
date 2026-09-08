@@ -59,16 +59,20 @@ def create_uploaded_survey(
     origin_latitude: float = 12.9,
     origin_longitude: float = 74.8,
     meters_per_pixel: float = 0.05,
+    image_bytes: io.BytesIO | None = None,
 ) -> dict:
-    """Create a survey and upload a synthetic sonar image with enough
-    metadata for geolocation to work. Returns the SurveyRead JSON dict."""
+    """Create a survey and upload a sonar image (a synthetic one by
+    default; pass `image_bytes` -- e.g. a real ARIS sample image opened
+    via `open(path, "rb")` -- to upload something real instead) with
+    enough metadata for geolocation to work. Returns the SurveyRead JSON
+    dict."""
     create_response = client.post("/api/v1/surveys", json={"name": name})
     assert create_response.status_code == 201
     survey = create_response.json()
 
     upload_response = client.post(
         f"/api/v1/surveys/{survey['id']}/upload",
-        files={"file": ("sonar.png", synthetic_sonar_png(), "image/png")},
+        files={"file": ("sonar.png", image_bytes or synthetic_sonar_png(), "image/png")},
         data={
             "origin_latitude": str(origin_latitude),
             "origin_longitude": str(origin_longitude),
