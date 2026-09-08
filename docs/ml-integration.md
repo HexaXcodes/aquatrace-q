@@ -1,9 +1,14 @@
 # ML Integration Guide (for Shaun + Shashank)
 
 Your integration surface is exactly three interfaces in `app/ml/base.py`,
-`app/ml/feature_extractor.py`, and `app/ml/classical_classifier.py`. Nothing
-in `app/api/`, `app/services/`, or the database schema needs to change when
-you plug in a real model.
+`app/ml/feature_extractor.py`, and `app/ml/classical_classifier.py`. No API
+route file (`app/api/v1/*.py`) needs to change when you plug in a real
+model. In practice, both real integrations so far (E004, YOLO11s -- see
+below) *did* each need one or two small, deliberate `app/services/`
+changes (never routes) and, once, a real migration -- see "What you should
+NOT need to touch" at the end of this file for exactly what changed and
+why. The registry (`app/ml/model_registry.py`) is still the one place that
+*always* changes.
 
 ## 1. Detection / segmentation model
 
@@ -241,6 +246,158 @@ rows showing up alongside classical's are exactly the intended behavior
 (comparison data point, never authoritative -- see this file's top
 docstring and spec section 17/49), not evidence of a second overwrite bug.
 
+### YOLO11s: the real trained marine debris/gear detector (now registered)
+
+`app/ml/yolo_debris_detector.py`'s `YoloDebrisDetector` wraps a trained
+YOLO11s object detector (`ultralytics==8.4.129`), loaded from
+`models/yolo11s_marine_debris_best.pt`, trained for 60 epochs on real ARIS
+Explorer 3000 forward-looking-sonar imagery from the same public
+[Marine Debris FLS Dataset](https://github.com/mvaldenegro/marine-debris-fls-datasets)
+already used for this project's classical/quantum classifier training data
+(see "Current training status" below) -- a different task on the same
+dataset family: whole-frame object detection (3-class:
+marine_debris/gear_hardware/other_anthropogenic) rather than classification
+of pre-cropped 96x96 target images (6-class: background/tire/chain/
+propeller/can/bottle).
+
+**Verified with real inference before any integration code was written**,
+per the handoff's own instruction not to trust the metrics files alone:
+loaded the checkpoint via `ultralytics.YOLO()` and ran `predict()` on all 5
+real sample images in `YOLO_TrainedModel/sample_sonar_images/`. Got 7 real
+detections across the 5 images, confidences 0.588-0.887, `model.names`
+matching `YOLO_TrainedModel/model_contract.json` exactly
+(`{0: marine_debris, 1: gear_hardware, 2: other_anthropogenic}`) --
+structurally sound, not corrupted, not a static/hallucinated output. This
+exact scenario is now permanent regression coverage:
+`tests/test_yolo_debris_detector.py::test_predict_on_real_sample_images_finds_real_objects`.
+
+**Real validated metrics** (`YOLO_TrainedModel/results.csv`, epoch 60/60,
+cited here, not re-derived): **precision 0.961, recall 0.982, mAP50 0.983,
+mAP50-95 0.801**, minimal cross-class confusion
+(`YOLO_TrainedModel/confusion_matrix.png`).
+
+**Side effect of installing ultralytics: torch moved 2.13.0 -> 2.14.0.**
+`ultralytics` depends on `torch>=1.8.0`; the resolver picked 2.14.0+cpu on
+install, upgrading the previously-pinned 2.13.0+cpu in place. Confirmed
+still a CPU build, not the much larger CUDA one `requirements.txt`'s own
+comment warns a plain `pip install -r requirements.txt` can pull. Re-pinned
+`requirements.txt` to `torch==2.14.0` to match reality, and re-ran the full
+E004 test suite against it (still passing) before committing that pin.
+
+#### Decision 1: taxonomy -- extend `KNOWN_DEBRIS_SUBCLASSES`, don't remap
+
+YOLO11s's 3 classes (`marine_debris`/`gear_hardware`/`other_anthropogenic`)
+overlap neither `KNOWN_DEBRIS_SUBCLASSES`' existing fine-grained values
+(`ghost_net`/`crab_pot`/`pipe`/`metal_debris`/`shipwreck`/`other_debris`)
+nor the classical/quantum classifiers' trained vocabulary (`background`/
+`tire`/`chain`/`propeller`/`can`/`bottle`). Three options were on the
+table: (a) add the 3 new values to `KNOWN_DEBRIS_SUBCLASSES` as coarser
+peers of the existing fine-grained ones, (b) lossily remap YOLO's classes
+onto existing subclass values, (c) treat detection as a separate coarse
+stage feeding into classification for fine-grained subclassing.
+
+**Chose (a) -- which turns out to already be this codebase's existing
+architecture, not a new idea.** `KNOWN_DEBRIS_SUBCLASSES` is explicitly
+documented as "a vocabulary, not a constraint" (`app/models/enums.py`) --
+new subclasses are meant to be added freely, and the mixed granularity
+(fine-grained values from purpose-built detectors like E004's
+"shipwreck", coarser values from a general detector like YOLO's
+"gear_hardware") is honest: it reports exactly what each detector said,
+at whatever granularity it actually operates at. (b) would have thrown
+away real model signal to force a uniform-looking vocabulary -- exactly
+the kind of fabrication this project avoids elsewhere (see the protection
+logic below). (c) sounds different from (a) but isn't, in this codebase:
+DETECTING already seeds a coarse `Target.debris_subclass` from the
+detector's own `class_name` (`target_service._SUBCLASS_CLASS_NAMES`,
+built for E004's "shipwreck" bootstrap), and CLASSIFYING already can
+refine/confirm it. (a) is the concrete implementation of (c) using
+machinery that already exists, rather than adding a second, redundant
+orchestration stage.
+
+**This also means zero new protection code was needed.**
+`classification_service._detector_protected_class()` (built for E004,
+see above) checks whether the classifier's *actual* trained vocabulary
+includes the target's detector-seeded subclass -- not whether the
+detector is E004 specifically. Since the classical classifier's real
+vocabulary doesn't include `marine_debris`/`gear_hardware`/
+`other_anthropogenic` either, the exact same guard protects YOLO's
+output automatically. Verified live against a real, freshly-started
+server (not just tests): processing a real ARIS debris image produced a
+`marine_debris` target whose classical `ClassificationRecord.note` reads
+*"NOT applied to target: classifier's trained vocabulary ['bottle', 'can',
+'chain', 'natural_seabed', 'propeller', 'tire'] does not include
+'marine_debris'..."* -- the identical protection message pattern E004 gets,
+with zero E004-specific code touched. Regression coverage:
+`tests/test_multi_model_detection.py::test_new_taxonomy_class_is_protected_from_a_classifier_that_never_saw_it`.
+
+#### Decision 2: run alongside E004, not replacing it
+
+E004 and YOLO11s answer different questions -- "is this specific blob a
+shipwreck" (narrow specialist, segmentation-based) vs. "is there debris/
+gear/anthropogenic material anywhere in this frame" (general-purpose,
+detection-based) -- so replacing either with the other would be a real
+capability loss with no justification. `Detection`'s own docstring
+already anticipated this exact scenario: *"multiple detections (from
+multiple models, or multiple runs of the same model) can and do point at
+the same physical object; Target is where those get consolidated."*
+
+`app/ml/model_registry.py` now has two independent, independently-gated
+slots: `get_detection_model()` -- the **general-purpose** slot, repurposed
+to gate on the YOLO11s checkpoint instead of E004's (falls back to
+`FixtureThresholdDetector` exactly as before when absent) -- and the new
+`get_shipwreck_detection_model()` -- the **specialist** slot, gated on
+E004's checkpoint, returning `None` (not a fixture) when absent, since a
+generic classical-CV stand-in specifically for "shipwreck detection"
+wouldn't mean anything. `detection_service.run_detection()` runs the
+general slot always, plus the specialist slot whenever it's registered,
+merging both models' real detections into the survey's detection set --
+each `Detection` row still records its own real `model_name`/
+`model_version`, so nothing about provenance is lost by merging.
+
+Verified live: processing a real ARIS debris image through a freshly
+started server with both checkpoints registered produced
+`"3 raw detection(s) from ['e004-unet-shipwreck-segmentation',
+'yolo11s-marine-debris-fls']"` in the real job's `stage_log` -- 2 real
+`marine_debris` detections from YOLO and 1 `shipwreck` detection from
+E004 (a false positive on a non-shipwreck image, consistent with E004's
+already-documented limitations above, not a new bug), all three carried
+cleanly through classification, geolocation, GIS enrichment, risk
+scoring, and priority without error. Regression coverage:
+`tests/test_multi_model_detection.py::test_run_detection_merges_both_registered_models`,
+plus `tests/test_e004_detector.py`'s updated registry tests (E004 now
+asserted against `get_shipwreck_detection_model()`, not
+`get_detection_model()`).
+
+#### Decision 3: `requires_manual_review` -- a new field, deliberately not `uncertainty_service`
+
+`YOLO_TrainedModel/model_contract.json` declares
+`default_confidence_threshold: 0.5` and `manual_review_range: [0.25, 0.5]`
+-- a raw detection-confidence policy from the model's own authors. This is
+a genuinely different question from `uncertainty_service.compute_uncertainty()`,
+which computes normalized entropy over a *classifier's* class
+probabilities. One is "how sure was the detector this is something at
+all"; the other is "how sure was the classifier which specific class it
+is" -- conflating them would answer neither question correctly.
+
+Added `requires_manual_review: bool | None` to both `Detection` and
+`Target` (migration `0003_add_requires_manual_review`), computed once by
+`YoloDebrisDetector.predict()` from the model's own declared thresholds
+(`[0.25, 0.5)` confidence -> `True`) and copied onto `Target` at
+target-creation time (`target_service.create_targets_from_detections`),
+never recomputed afterward. **`None` means "this detector declares no
+such policy"** (E004, `FixtureThresholdDetector`) -- **not** "reviewed and
+cleared." Only YOLO's own detections ever get a real `True`/`False`.
+Verified live: the same real end-to-end run above returned
+`requires_manual_review: false` for both real YOLO `marine_debris`
+targets (confidences 0.887/0.832, both above the review band) and
+`requires_manual_review: null` for the E004 `shipwreck` target (E004
+declares no such policy) -- in the same JSON response, both fields
+reachable via `GET /surveys/{id}/report`. Regression coverage:
+`tests/test_yolo_debris_detector.py::test_manual_review_boundary_is_a_pure_function`
+(the `[0.25, 0.5)` boundary logic in isolation) and
+`test_run_detection_merges_both_registered_models` (the live None-vs-bool
+split across both models).
+
 ## 2. Feature extraction
 
 `FeatureExtractor` in `app/ml/feature_extractor.py`. The currently-registered
@@ -319,6 +476,22 @@ actually computed from.
 
 ## What you should NOT need to touch
 
-`app/api/v1/detections.py`, `targets.py`, `classification.py`, the database
-migrations, or anything in `app/services/` other than swapping which model
-instance `model_registry` returns.
+`app/api/v1/detections.py`, `targets.py`, `classification.py` -- no API
+route file has changed across either real integration (E004 or YOLO11s).
+
+In practice, both real integrations *did* need small, deliberate changes
+beyond `model_registry.py` -- this section originally claimed otherwise,
+which turned out to be optimistic rather than accurate. What actually
+changed, and why it was a real requirement rather than scope creep:
+`target_service.py` (seed `Target.debris_subclass` from the detector's own
+`class_name`/copy `requires_manual_review` forward -- both are genuinely
+new *data*, not new *behavior*, for existing code paths),
+`classification_service.py` (the vocabulary-membership protection guard --
+a real correctness fix, not a new model's fault), `detection_service.py`
+(run more than one registered model and merge -- YOLO11s specifically
+needed this, E004 alone did not), and one real Alembic migration
+(`requires_manual_review` needed an actual new column; nothing before it
+did). The stable claim is narrower than originally stated: the database
+schema for `Detection`/`Target`'s *existing* fields doesn't change, and no
+API route file does either -- not that zero services or migrations ever
+will.

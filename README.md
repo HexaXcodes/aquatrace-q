@@ -54,8 +54,9 @@ backend/
 │   └── utils/                           filesystem helpers
 ├── migrations/versions/
 │   ├── 0001_create_surveys_table.py
-│   └── 0002_add_pipeline_tables.py
-├── tests/                     13 files, 40 tests (see "Testing" below)
+│   ├── 0002_add_pipeline_tables.py
+│   └── 0003_add_requires_manual_review.py
+├── tests/                     16 files, 61 tests (see "Testing" below)
 ├── docs/                       architecture, contracts, integration guides
 ├── Dockerfile, docker-compose.yml, requirements.txt, .env.example, alembic.ini
 └── README.md
