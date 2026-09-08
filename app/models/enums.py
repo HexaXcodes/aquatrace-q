@@ -56,6 +56,17 @@ class TargetClass(str, enum.Enum):
 # are plain strings so a model can emit a class outside this list (it will
 # just be new information, not a validation failure). Kept here purely so
 # the frontend / docs have a canonical list to render against.
+#
+# Mixed granularity is deliberate, not an oversight: ghost_net/crab_pot/
+# pipe/metal_debris/shipwreck/other_debris are fine-grained (from
+# detectors purpose-built for one specific class, e.g. E004's
+# "shipwreck"), while marine_debris/gear_hardware/other_anthropogenic are
+# the coarser 3-class taxonomy the general-purpose YOLO11s detector was
+# actually trained on (see app/ml/yolo_debris_detector.py,
+# YOLO_TrainedModel/model_contract.json). Reporting exactly what each
+# detector said, at whatever granularity it actually operates at, is
+# preferred over inventing a lossy mapping between the two vocabularies
+# just to make them look uniform -- see docs/ml-integration.md.
 KNOWN_DEBRIS_SUBCLASSES: tuple[str, ...] = (
     "ghost_net",
     "crab_pot",
@@ -63,6 +74,9 @@ KNOWN_DEBRIS_SUBCLASSES: tuple[str, ...] = (
     "metal_debris",
     "shipwreck",
     "other_debris",
+    "marine_debris",
+    "gear_hardware",
+    "other_anthropogenic",
     "unknown",
 )
 

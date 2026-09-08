@@ -92,8 +92,18 @@ def run_pipeline(
         db.commit()
 
         detections = detection_service.run_detection(db, survey)
-        model_name = detections[0].model_name if detections else "n/a"
-        _log(job, ProcessingJobStatus.DETECTING, "OK", f"{len(detections)} raw detection(s) from '{model_name}'.")
+        # More than one detection model can contribute to a single survey
+        # (see detection_service.run_detection's docstring) -- list every
+        # distinct model actually represented among the results, not just
+        # the first detection's model, so this log line stays accurate
+        # once a second model is registered.
+        model_names = sorted({d.model_name for d in detections}) if detections else ["n/a"]
+        _log(
+            job,
+            ProcessingJobStatus.DETECTING,
+            "OK",
+            f"{len(detections)} raw detection(s) from {model_names}.",
+        )
         db.add(job)
         db.commit()
 

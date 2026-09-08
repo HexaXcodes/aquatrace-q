@@ -3,9 +3,9 @@ Model registry (Phase 6/8/9).
 
 Services never construct `FixtureThresholdDetector` /
 `SklearnClassicalClassifier` / `QiskitQSVCClassifier` directly -- they
-call `get_detection_model()` / `get_classical_classifier()` /
-`get_quantum_classifier()`. This is the one place that changes when a
-teammate's real model is ready:
+call `get_detection_model()` / `get_shipwreck_detection_model()` /
+`get_classical_classifier()` / `get_quantum_classifier()`. This is the
+one place that changes when a teammate's real model is ready:
 
     Shaun/Shashank: implement DetectionModel, then swap the instance
         returned by get_detection_model() (or extend the registry to
@@ -16,6 +16,21 @@ teammate's real model is ready:
     Aadvik: same, with `QiskitQSVCClassifier.load(path)`.
 
 No other file needs to change.
+
+**Two independent detection "slots", not one model replacing another**
+(see docs/ml-integration.md for the full reasoning): `get_detection_model()`
+is the general-purpose slot -- it answers "is there debris/gear/
+anthropogenic material anywhere in this frame" and is gated on the
+YOLO11s debris/gear detector's checkpoint, falling back to
+`FixtureThresholdDetector` exactly as before if that checkpoint is
+absent. `get_shipwreck_detection_model()` is a second, independent slot
+for E004's narrow shipwreck-segmentation specialty -- it answers a
+different, more specific question ("is this particular blob a
+shipwreck") and returns `None` (not a fixture) when its checkpoint is
+absent, since a generic classical-CV fallback standing in specifically
+for "shipwreck detection" wouldn't mean anything. `detection_service.
+run_detection()` calls both slots and merges whatever real detections
+each one produces.
 """
 
 from __future__ import annotations
@@ -33,21 +48,50 @@ from app.ml.quantum_classifier import QiskitQSVCClassifier, QiskitUnavailableErr
 logger = get_logger(__name__)
 
 _E004_CHECKPOINT_NAME = "E004_best.pt"
+_YOLO_DEBRIS_CHECKPOINT_NAME = "yolo11s_marine_debris_best.pt"
 
 
 @lru_cache
 def get_detection_model() -> DetectionModel:
-    """Returns the currently registered detection model.
+    """Returns the currently registered general-purpose detection model.
 
-    Mirrors `get_classical_classifier()`'s gating: if a trained E004
-    checkpoint (`MODEL_DIRECTORY/E004_best.pt`) is present, load and
-    return the real `E004ShipwreckDetector`. Otherwise (checkpoint
-    missing, or torch not importable in this environment) fall back to
-    `FixtureThresholdDetector` -- a real (if crude) classical CV
-    detector, never a fabricated prediction. Tests redirect
-    `MODEL_DIRECTORY` to an empty tmp dir (see `tests/conftest.py`), so
-    they exercise the fixture path unless they explicitly place a
-    checkpoint there.
+    Mirrors `get_classical_classifier()`'s gating: if a trained YOLO11s
+    debris/gear checkpoint (`MODEL_DIRECTORY/yolo11s_marine_debris_best.pt`)
+    is present, load and return the real `YoloDebrisDetector`. Otherwise
+    (checkpoint missing, or ultralytics not importable in this
+    environment) fall back to `FixtureThresholdDetector` -- a real (if
+    crude) classical CV detector, never a fabricated prediction. Tests
+    redirect `MODEL_DIRECTORY` to an empty tmp dir (see
+    `tests/conftest.py`), so they exercise the fixture path unless they
+    explicitly place a checkpoint there.
+
+    This function used to gate on E004 directly (E004 was, for a while,
+    the only real detector this project had). It now gates on the
+    general-purpose YOLO11s detector instead -- see this module's
+    docstring for why E004 moved to its own `get_shipwreck_detection_model()`
+    slot rather than being replaced.
+    """
+    settings = get_settings()
+    checkpoint_path = settings.MODEL_DIRECTORY / _YOLO_DEBRIS_CHECKPOINT_NAME
+    if checkpoint_path.exists():
+        try:
+            from app.ml.yolo_debris_detector import UltralyticsUnavailableError, YoloDebrisDetector
+
+            return YoloDebrisDetector(checkpoint_path=checkpoint_path)
+        except UltralyticsUnavailableError as exc:
+            logger.warning("yolo_debris_detector_unavailable", extra={"reason": str(exc)})
+
+    return FixtureThresholdDetector()
+
+
+@lru_cache
+def get_shipwreck_detection_model() -> DetectionModel | None:
+    """Returns the registered shipwreck-specialist detector (E004), or
+    `None` if its checkpoint is absent or torch isn't importable --
+    there's no meaningful fallback for a narrow specialist question like
+    "is this a shipwreck," so unlike `get_detection_model()` this does
+    NOT fall back to `FixtureThresholdDetector`. `detection_service.
+    run_detection()` simply skips this slot when it returns `None`.
     """
     settings = get_settings()
     checkpoint_path = settings.MODEL_DIRECTORY / _E004_CHECKPOINT_NAME
@@ -59,7 +103,7 @@ def get_detection_model() -> DetectionModel:
         except TorchUnavailableError as exc:
             logger.warning("e004_detector_unavailable", extra={"reason": str(exc)})
 
-    return FixtureThresholdDetector()
+    return None
 
 
 @lru_cache
@@ -108,5 +152,6 @@ def reset_registry_cache() -> None:
     """Test-only: clear cached singletons so tests can register fresh
     (e.g. freshly trained) model instances without process restart."""
     get_detection_model.cache_clear()
+    get_shipwreck_detection_model.cache_clear()
     get_classical_classifier.cache_clear()
     get_quantum_classifier.cache_clear()

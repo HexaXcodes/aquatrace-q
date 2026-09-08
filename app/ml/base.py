@@ -19,12 +19,23 @@ from pathlib import Path
 @dataclass(slots=True)
 class RawDetection:
     """One model output. `bbox` and/or `mask_path` may be present depending
-    on whether the model does detection, segmentation, or both."""
+    on whether the model does detection, segmentation, or both.
+
+    `requires_manual_review` is `None` unless the producing model declares
+    its own confidence-band policy for "too uncertain to trust, but not
+    low enough to discard" (e.g. the YOLO11s debris/gear detector's
+    model_contract.json: 0.25-0.5 confidence -> manual review). `None`
+    means "this model has no such policy," not "reviewed and cleared" --
+    do not treat it as `False`. This is a raw-detection-confidence signal,
+    deliberately separate from `uncertainty_service`'s classifier-
+    probability entropy calculation; the two answer different questions
+    and are never merged. See docs/ml-integration.md."""
 
     class_name: str
     confidence: float
     bbox: list[float] | None = None  # [x1, y1, x2, y2] in pixel space
     mask_path: str | None = None
+    requires_manual_review: bool | None = None
 
 
 class DetectionModel(abc.ABC):
