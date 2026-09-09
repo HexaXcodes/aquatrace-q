@@ -11,7 +11,7 @@ from app.core.exceptions import AquaTraceError
 from app.core.logging import get_logger
 from app.ml.base import DetectionModel
 from app.ml.detection_model import time_prediction
-from app.ml.model_registry import get_detection_model, get_shipwreck_detection_model
+from app.ml.model_registry import get_detection_model, get_shipwreck_detection_model, reset_registry_cache
 from app.models.detection import Detection
 from app.models.survey import Survey
 
@@ -41,20 +41,14 @@ def _compute_iou(box1: list[float], box2: list[float]) -> float:
 def run_detection(db: Session, survey: Survey) -> list[Detection]:
     """Run every currently registered detection model against `survey`'s
     stored file and persist one `Detection` row per raw output.
-
-    Two independent slots are run and merged, not one model chosen over
-    the other -- see `app/ml/model_registry.py`'s module docstring.
-    `get_detection_model()` (general-purpose: YOLO11s debris/gear, or
-    `FixtureThresholdDetector` if untrained) always runs;
-    `get_shipwreck_detection_model()` (E004, shipwreck-specialist) runs
-    too whenever its checkpoint is registered. Overlapping detections where
-    debris/gear detector and shipwreck detector overlap are resolved in
-    favor of the debris/gear detector.
     """
     if not survey.file_path:
         raise SurveyNotReadyForDetectionError(
             "Survey has no uploaded file to run detection against.", survey_id=survey.id
         )
+
+    # Clear cached model singletons so live registry changes are picked up immediately
+    reset_registry_cache()
 
     models: list[DetectionModel] = [get_detection_model()]
     shipwreck_model = get_shipwreck_detection_model()

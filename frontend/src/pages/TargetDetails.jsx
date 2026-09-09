@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import SubHeader from '../components/SubHeader';
 import { getTargetDetail, reprocessSurveyForTarget } from '../api';
 
@@ -15,6 +15,7 @@ const RISK_BADGE = {
 
 const TargetDetails = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [reprocessing, setReprocessing] = useState(false);
@@ -38,10 +39,9 @@ const TargetDetails = () => {
     setStageLog([]);
     try {
       await reprocessSurveyForTarget(id, {}, (job) => setStageLog(job.stage_log));
-      load();
+      navigate('/triage');
     } catch (err) {
       setError(err.message);
-    } finally {
       setReprocessing(false);
     }
   };
