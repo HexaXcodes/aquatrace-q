@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.config import Settings, get_settings
 from app.db.base import Base
+from app.db.database import enable_sqlite_foreign_keys
 from app.db.session import (
     clear_session_factory_override,
     get_db,
@@ -71,6 +72,13 @@ def db_engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    # This is a separate engine from app/db/database.py's real one (an
+    # in-memory SQLite one, built directly here), so it needs the same
+    # PRAGMA foreign_keys=ON call independently -- otherwise a test that
+    # exercises a real ON DELETE CASCADE (e.g. target_service.
+    # delete_targets_for_survey()) would silently pass here while only
+    # actually cascading against the real dev/prod engine.
+    enable_sqlite_foreign_keys(engine)
     Base.metadata.create_all(bind=engine)
     yield engine
     Base.metadata.drop_all(bind=engine)
