@@ -58,8 +58,19 @@ def run_detection(db: Session, survey: Survey) -> list[Detection]:
     all_raw: list[tuple[DetectionModel, RawDetection, float]] = []
     debris_boxes: list[list[float]] = []
 
-    for model in models:
+    for idx, model in enumerate(models):
         raw_detections, elapsed_ms = time_prediction(model, Path(survey.file_path))
+
+        # If primary detector found no targets (e.g. YOLO trained on ARIS FLS missing side-scan sonar format),
+        # run acoustic intensity threshold detector so ghost gear/nets in side-scan sonar are detected
+        if idx == 0 and len(raw_detections) == 0 and not isinstance(model, FixtureThresholdDetector):
+            logger.info("primary_detector_zero_targets_running_acoustic_fallback", extra={"survey_id": survey.id})
+            from app.ml.detection_model import FixtureThresholdDetector
+            fixture = FixtureThresholdDetector(std_devs_above_mean=1.2, min_component_pixels=30)
+            raw_detections, elapsed_ms = time_prediction(fixture, Path(survey.file_path))
+            for raw in raw_detections:
+                raw.class_name = "ghost_net"
+
         per_item_ms = elapsed_ms / max(len(raw_detections), 1)
 
         for raw in raw_detections:
