@@ -103,3 +103,67 @@ def test_list_surveys(client: TestClient) -> None:
     body = response.json()
     assert body["total"] >= 2
     assert len(body["items"]) >= 2
+
+
+def test_get_survey_image_returns_the_real_uploaded_bytes(client: TestClient) -> None:
+    """Round-trips real image bytes through upload -> GET /image, not
+    just checking status code/content-type -- the returned bytes must
+    decode back to pixel-identical image data, proving this is genuinely
+    streaming the uploaded file rather than any kind of placeholder."""
+    create_response = client.post("/api/v1/surveys", json={"name": "Image Round-Trip Survey"})
+    survey_id = create_response.json()["id"]
+
+    original_png = _fake_sonar_png(200, 150)
+    original_bytes = original_png.getvalue()
+    original_png.seek(0)
+
+    upload_response = client.post(
+        f"/api/v1/surveys/{survey_id}/upload",
+        files={"file": ("sonar.png", original_png, "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    image_response = client.get(f"/api/v1/surveys/{survey_id}/image")
+    assert image_response.status_code == 200
+    assert image_response.headers["content-type"] == "image/png"
+
+    # Real pixel round-trip, not just "some bytes came back."
+    returned_image = Image.open(io.BytesIO(image_response.content))
+    assert returned_image.size == (200, 150)
+    original_image = Image.open(io.BytesIO(original_bytes))
+    assert returned_image.tobytes() == original_image.tobytes()
+
+
+def test_get_survey_image_404s_when_survey_has_no_upload_yet(client: TestClient) -> None:
+    create_response = client.post("/api/v1/surveys", json={"name": "No Upload Yet Survey"})
+    survey_id = create_response.json()["id"]
+
+    response = client.get(f"/api/v1/surveys/{survey_id}/image")
+    assert response.status_code == 404
+    assert response.json()["error"] == "SurveyImageNotAvailableError"
+
+
+def test_get_survey_image_404s_when_survey_does_not_exist(client: TestClient) -> None:
+    response = client.get("/api/v1/surveys/00000000-0000-0000-0000-000000000000/image")
+    assert response.status_code == 404
+    assert response.json()["error"] == "SurveyNotFoundError"
+
+
+def test_get_survey_image_404s_when_file_missing_from_disk(client: TestClient) -> None:
+    """The DB row can outlive the on-disk file (e.g. deleted externally,
+    or a moved UPLOAD_DIRECTORY) -- must 404 honestly rather than error
+    ungracefully or serve stale/wrong bytes."""
+    import os
+
+    create_response = client.post("/api/v1/surveys", json={"name": "Missing File Survey"})
+    survey_id = create_response.json()["id"]
+    upload_response = client.post(
+        f"/api/v1/surveys/{survey_id}/upload",
+        files={"file": ("sonar.png", _fake_sonar_png(), "image/png")},
+    )
+    file_path = upload_response.json()["file_path"]
+    os.remove(file_path)
+
+    response = client.get(f"/api/v1/surveys/{survey_id}/image")
+    assert response.status_code == 404
+    assert response.json()["error"] == "SurveyImageNotAvailableError"

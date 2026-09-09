@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: #0f131c;
+    color: #dfe2ef;
+  }
+  body {
+    overscroll-behavior: none;
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Leaflet dark-theme overrides (Priority Map) -- v2 palette */
+.leaflet-popup-content-wrapper {
+  background: #1c1f29 !important;
+  color: #dfe2ef !important;
+  border: 1px solid #3b4a45 !important;
+  border-radius: 1rem !important;
+  box-shadow: 0 16px 40px -8px rgba(0, 5, 15, 0.7) !important;
+}
+.leaflet-popup-tip {
+  background: #1c1f29 !important;
+  border: 1px solid #3b4a45 !important;
+}
+.leaflet-container a.leaflet-popup-close-button {
+  color: #b9cac3 !important;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.8);
+    box-shadow: 0 0 0 0 rgba(255, 178, 183, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 15px rgba(255, 178, 183, 0);
+  }
+  100% {
+    transform: scale(0.8);
+    box-shadow: 0 0 0 0 rgba(255, 178, 183, 0);
+  }
+}
+.pulse-anim {
+  animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}

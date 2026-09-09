@@ -1,0 +1,14 @@
+{
+  "model": "YOLO11s Marine Debris FLS v1",
+  "classes": {
+    "0": "marine_debris",
+    "1": "gear_hardware",
+    "2": "other_anthropogenic"
+  },
+  "default_confidence_threshold": 0.5,
+  "manual_review_range": [
+    0.25,
+    0.5
+  ],
+  "unknown_anomaly_rule": "If a detection is between 0.25 and 0.50 confidence, display Manual Review Required."
+}

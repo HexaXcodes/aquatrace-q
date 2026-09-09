@@ -13,8 +13,11 @@ uploads/*
 !uploads/.gitkeep
 outputs/*
 !outputs/.gitkeep
-models/*
-!models/.gitkeep
+# Allow model binary files
+!models/*.pt
+!models/*.joblib
+!models/*.pkl
+
 
 # Claude Code local session data
 .claude/

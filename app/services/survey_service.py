@@ -12,6 +12,7 @@ upload layout and the parser registry -- the API layer just calls
 
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 
 from fastapi import UploadFile
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import (
+    AquaTraceError,
     FileTooLargeError,
     InvalidSonarFileError,
     SurveyNotFoundError,
@@ -33,6 +35,14 @@ from app.schemas.survey import SurveyCreate, SurveyUploadMetadata
 from app.utils.files import extension_of, resolve_within, sanitize_filename
 
 logger = get_logger(__name__)
+
+
+class SurveyImageNotAvailableError(AquaTraceError):
+    """Raised when a survey has no uploaded file yet, or its stored
+    `file_path` no longer exists on disk (e.g. deleted externally) --
+    never fabricated/placeholder image bytes are served in either case."""
+
+    status_code = 404
 
 
 def create_survey(db: Session, payload: SurveyCreate) -> Survey:
@@ -61,6 +71,30 @@ def list_surveys(db: Session, limit: int = 50, offset: int = 0) -> tuple[list[Su
         .all()
     )
     return list(items), total
+
+
+def get_survey_image_path(survey: Survey) -> tuple[Path, str]:
+    """Returns `(path, content_type)` for `survey`'s real uploaded sonar
+    image on disk, so the API layer can stream the actual bytes back
+    (`GET /surveys/{id}/image`) instead of the frontend's honest "no
+    image-serving endpoint exists" placeholder it previously had to fall
+    back to. Raises `SurveyImageNotAvailableError` -- never returns a
+    path that doesn't genuinely exist -- if the survey hasn't been
+    uploaded yet (`file_path` is `None`) or its stored file is missing
+    from disk."""
+    if not survey.file_path:
+        raise SurveyImageNotAvailableError(
+            f"Survey '{survey.id}' has no uploaded file yet.", survey_id=survey.id
+        )
+
+    path = Path(survey.file_path)
+    if not path.is_file():
+        raise SurveyImageNotAvailableError(
+            f"Survey '{survey.id}''s uploaded file is missing on disk.", survey_id=survey.id
+        )
+
+    content_type, _ = mimetypes.guess_type(path.name)
+    return path, content_type or "application/octet-stream"
 
 
 def _validate_upload(file: UploadFile, settings: Settings) -> str:

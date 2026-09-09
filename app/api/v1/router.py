@@ -9,6 +9,7 @@ from app.api.v1 import (
     detections,
     environment,
     experiments,
+    images,
     missions,
     priority,
     processing,
@@ -20,6 +21,7 @@ from app.api.v1 import (
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(surveys.router)
+api_router.include_router(images.router)
 api_router.include_router(processing.router)
 api_router.include_router(detections.router)
 api_router.include_router(targets.router)
