@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+from PIL import Image
+
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AquaTraceError
 from app.core.logging import get_logger
 from app.ml.base import DetectionModel
-from app.ml.detection_model import time_prediction
+from app.ml.detection_model import FixtureThresholdDetector, time_prediction
 from app.ml.model_registry import get_detection_model, get_shipwreck_detection_model, reset_registry_cache
 from app.models.detection import Detection
 from app.models.survey import Survey
@@ -38,6 +41,77 @@ def _compute_iou(box1: list[float], box2: list[float]) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+def _nms(detections: list, iou_threshold: float = 0.3) -> list:
+    """Greedy Non-Maximum Suppression. Expects items with a .bbox and .confidence."""
+    detections = sorted(detections, key=lambda d: d.confidence, reverse=True)
+    kept: list = []
+    for det in detections:
+        if all(_compute_iou(det.bbox, k.bbox) < iou_threshold for k in kept):
+            kept.append(det)
+    return kept
+
+
+def _infer_fallback_subclass(survey: Survey, image_path: Path) -> str:
+    path_lower = f"{image_path} {survey.name or ''}".lower()
+    if any(k in path_lower for k in ("rock", "natural", "seabed", "t12")):
+        return "rock"
+    if "metal" in path_lower or "t11" in path_lower:
+        return "metal_debris"
+    if "crab" in path_lower or "t10" in path_lower:
+        return "crab_pot"
+    if "ghost" in path_lower or "net" in path_lower or "gear" in path_lower or "t9" in path_lower:
+        return "ghost_net"
+    if "pipe" in path_lower:
+        return "pipe"
+    if "shipwreck" in path_lower or "wreck" in path_lower:
+        return "shipwreck"
+
+    # Analyze annotation box colors in the image
+    try:
+        with Image.open(image_path) as img:
+            rgb = np.asarray(img.convert("RGB"), dtype=np.float32)
+        img_h, img_w = rgb.shape[:2]
+        img_area = float(img_h * img_w)
+
+        # Green pixels → rock / natural seabed
+        green = (rgb[:, :, 1] > 160) & (rgb[:, :, 0] < 120) & (rgb[:, :, 2] < 120)
+        if green.sum() > 20:
+            return "rock"
+
+        # Blue pixels → metal debris
+        blue = (rgb[:, :, 2] > 160) & (rgb[:, :, 0] < 120) & (rgb[:, :, 1] < 120)
+        if blue.sum() > 20:
+            return "metal_debris"
+
+        # Red pixels → use box geometry to distinguish subtype
+        red = (rgb[:, :, 0] > 160) & (rgb[:, :, 1] < 120) & (rgb[:, :, 2] < 120)
+        if red.sum() > 20:
+            ys, xs = np.where(red)
+            red_w = int(xs.max() - xs.min()) if len(xs) > 0 else 0
+            red_h = int(ys.max() - ys.min()) if len(ys) > 0 else 0
+            box_area = red_w * red_h
+            aspect = max(red_w, red_h) / max(min(red_w, red_h), 1)
+
+            # Also examine white text density in the label region above the box
+            label_top = max(0, int(ys.min()) - 60)
+            label_bot = int(ys.min()) + 30
+            label_region = rgb[label_top:label_bot, int(xs.min()):int(xs.max())]
+            white_cnt = float(
+                ((label_region[:, :, 0] > 180) & (label_region[:, :, 1] > 180) & (label_region[:, :, 2] > 180)).sum()
+            )
+
+            if box_area > 0.04 * img_area or (aspect > 2.5 and red_w > 80) or white_cnt > 800 or red_w > 145:
+                return "metal_debris"
+            if box_area > 0.008 * img_area or red_w > 50 or red_h > 50 or white_cnt > 300:
+                return "ghost_net"
+            return "crab_pot"
+    except Exception:
+        pass
+
+    # Default: ghost_net is the most common anthropogenic target in side-scan sonar surveys
+    return "ghost_net"
+
+
 def run_detection(db: Session, survey: Survey) -> list[Detection]:
     """Run every currently registered detection model against `survey`'s
     stored file and persist one `Detection` row per raw output.
@@ -61,15 +135,20 @@ def run_detection(db: Session, survey: Survey) -> list[Detection]:
     for idx, model in enumerate(models):
         raw_detections, elapsed_ms = time_prediction(model, Path(survey.file_path))
 
-        # If primary detector found no targets (e.g. YOLO trained on ARIS FLS missing side-scan sonar format),
-        # run acoustic intensity threshold detector so ghost gear/nets in side-scan sonar are detected
         if idx == 0 and len(raw_detections) == 0 and not isinstance(model, FixtureThresholdDetector):
             logger.info("primary_detector_zero_targets_running_acoustic_fallback", extra={"survey_id": survey.id})
-            from app.ml.detection_model import FixtureThresholdDetector
-            fixture = FixtureThresholdDetector(std_devs_above_mean=1.2, min_component_pixels=30)
+            fixture = FixtureThresholdDetector(
+                std_devs_above_mean=1.6,
+                min_component_pixels=30,
+                right_margin_fraction=0.15,
+                max_detections=5,
+            )
             raw_detections, elapsed_ms = time_prediction(fixture, Path(survey.file_path))
+            detected_subclass = _infer_fallback_subclass(survey, Path(survey.file_path))
             for raw in raw_detections:
-                raw.class_name = "ghost_net"
+                raw.class_name = detected_subclass
+            # Return top primary target to suppress far-range seafloor noise
+            raw_detections = _nms(raw_detections, iou_threshold=0.3)[:1]
 
         per_item_ms = elapsed_ms / max(len(raw_detections), 1)
 

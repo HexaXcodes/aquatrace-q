@@ -18,6 +18,8 @@ logger = get_logger(__name__)
 # hardcode the database around only these classes").
 _CLASS_NAME_MAP: dict[str, TargetClass] = {
     "NATURAL_SEABED": TargetClass.NATURAL_SEABED,
+    "natural_seabed": TargetClass.NATURAL_SEABED,
+    "rock": TargetClass.NATURAL_SEABED,
     "ANTHROPOGENIC": TargetClass.ANTHROPOGENIC,
     "UNCERTAIN": TargetClass.UNCERTAIN,
 }
@@ -34,26 +36,17 @@ for _subclass in _SUBCLASS_CLASS_NAMES:
 
 def create_targets_from_detections(db: Session, detections: list[Detection]) -> list[Target]:
     """
-    Create one Target per Detection that isn't confidently natural
-    seabed. This is a 1:1 mapping for now (Phase 6); a later phase may
-    introduce N:1 clustering of detections that overlap spatially into a
-    single target, which only changes this function.
+    Create one Target per Detection that was identified in the survey.
     """
     targets: list[Target] = []
     for detection in detections:
         coarse_class = _CLASS_NAME_MAP.get(detection.class_name, TargetClass.UNCERTAIN)
-        if coarse_class is TargetClass.NATURAL_SEABED:
-            continue  # not worth tracking as a triage target
 
         target = Target(
             survey_id=detection.survey_id,
             detection_id=detection.id,
             classification=coarse_class,
-            # Bootstrap value from the detector's own class signal, when it
-            # named a specific subclass -- overwritten by
-            # classification_service once the classical classifier runs (if
-            # trained), same as every other target.
-            debris_subclass=detection.class_name if detection.class_name in _SUBCLASS_CLASS_NAMES else None,
+            debris_subclass=detection.class_name if detection.class_name in KNOWN_DEBRIS_SUBCLASSES else detection.class_name,
             confidence=detection.confidence,
             requires_manual_review=detection.requires_manual_review,
             bbox=detection.bbox,

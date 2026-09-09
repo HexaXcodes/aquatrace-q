@@ -196,53 +196,14 @@ const Triage = () => {
             <div className="hidden xl:block h-6 w-[2px] bg-outline-variant/40" />
           </div>
 
-          <Panel
-            title="Detected (Real Target Overlay)"
-            icon="smart_toy"
-            badge={`${dossiers.length} ANOMALIES BOUNDED`}
-            footer={[
-              ['Model', dossiers.length > 0 ? 'e004-unet-shipwreck-segmentation' : 'Not yet run'],
-              ['Threshold', 'sigmoid(logits) > 0.5'],
-              ['Mask resolution', '1024x1024'],
-            ]}
-          >
-            <div className="absolute inset-0 opacity-25" style={gridStyle} />
-            {hasImagery && vectorsVisible &&
-              dossiers.map(({ target, risk }) => {
-                if (!target.bbox) return null;
-                const [x1, y1, x2, y2] = target.bbox;
-                const level = risk?.level;
-                return (
-                  <button
-                    key={target.id}
-                    type="button"
-                    onClick={() => navigate(`/target/${target.id}`)}
-                    className={`absolute rounded-xs border-2 border-dashed flex flex-col justify-between p-1 text-left ${
-                      level === 'CRITICAL' || level === 'HIGH' ? 'border-error/80 bg-error/10' : 'border-primary/70 bg-primary/5'
-                    }`}
-                    style={{
-                      left: `${(x1 / survey.width) * 100}%`,
-                      top: `${(y1 / survey.height) * 100}%`,
-                      width: `${Math.max(((x2 - x1) / survey.width) * 100, 5)}%`,
-                      height: `${Math.max(((y2 - y1) / survey.height) * 100, 5)}%`,
-                    }}
-                  >
-                    <span
-                      className={`font-telemetry-sm text-[10px] px-1 rounded-xs inline-block self-start font-bold uppercase ${
-                        level === 'CRITICAL' || level === 'HIGH' ? 'bg-error text-on-error' : 'bg-primary text-on-primary'
-                      }`}
-                    >
-                      {(target.debris_subclass || target.classification || 'uncertain')}: {target.confidence != null ? target.confidence.toFixed(2) : 'n/a'}
-                    </span>
-                  </button>
-                );
-              })}
-            {(!hasImagery || dossiers.length === 0) && (
-              <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant font-body-sm text-body-sm">
-                {dossiers.length === 0 ? 'No non-seabed targets detected.' : 'No pixel dimensions recorded.'}
-              </div>
-            )}
-          </Panel>
+          <DetectionPanel
+            dossiers={dossiers}
+            survey={survey}
+            hasImagery={hasImagery}
+            vectorsVisible={vectorsVisible}
+            onTargetClick={(id) => navigate(`/target/${id}`)}
+            getSurveyImageUrl={() => getSurveyImageUrl(surveyId)}
+          />
         </div>
 
         {/* Target dossiers */}
@@ -312,6 +273,107 @@ const gridStyle = {
   backgroundImage: 'linear-gradient(90deg, #6fffdb 1px, transparent 1px), linear-gradient(#6fffdb 1px, transparent 1px)',
   backgroundSize: '32px 32px',
 };
+
+const RISK_BADGE_BORDER = (level) =>
+  level === 'CRITICAL' || level === 'HIGH' ? 'border-error/80 bg-error/10' : 'border-primary/70 bg-primary/5';
+const RISK_BADGE_LABEL = (level) =>
+  level === 'CRITICAL' || level === 'HIGH' ? 'bg-error text-on-error' : 'bg-primary text-on-primary';
+
+/**
+ * Detection panel — renders the sonar image as the coordinate reference
+ * so bbox percentages (x/width, y/height) land on the correct pixel.
+ * The image is displayed with object-contain to match the left panel.
+ */
+const DetectionPanel = ({ dossiers, survey, hasImagery, vectorsVisible, onTargetClick, getSurveyImageUrl }) => (
+  <div className="flex-1 flex flex-col rounded-DEFAULT bg-surface-container-low overflow-hidden shadow-lg">
+    {/* Header */}
+    <div className="px-space-lg py-space-md flex items-center justify-between bg-surface-container">
+      <div className="flex items-center gap-space-sm">
+        <span className="material-symbols-outlined text-on-surface-variant text-[20px]">smart_toy</span>
+        <span className="font-label-lg text-label-lg text-on-surface tracking-wide uppercase font-semibold">Detected (Real Target Overlay)</span>
+      </div>
+      <span className="px-space-sm py-space-2xs rounded-full bg-surface-container-highest text-on-surface-variant font-telemetry-sm text-telemetry-sm">
+        {dossiers.length} ANOMALIES BOUNDED
+      </span>
+    </div>
+
+    {/* Overlay canvas — fixed height matching the sonar panel; image fills it with object-contain */}
+    <div
+      className="relative w-full overflow-hidden bg-surface-container-lowest"
+      style={{ aspectRatio: '16/9' }}
+    >
+      {/* Sonar image at low opacity — coordinate reference, same sizing as left panel */}
+      {hasImagery && (
+        <img
+          src={getSurveyImageUrl()}
+          alt="Detection coordinate reference"
+          className="absolute inset-0 w-full h-full object-contain opacity-35"
+        />
+      )}
+      <div className="absolute inset-0 opacity-15" style={gridStyle} />
+
+      {/* Bounding boxes — coordinates are in image pixels, scaled to object-contain display */}
+      {hasImagery && vectorsVisible &&
+        dossiers.map(({ target, risk }) => {
+          if (!target.bbox) return null;
+          const [x1, y1, x2, y2] = target.bbox;
+          const level = risk?.level;
+
+          // object-contain letterboxes the image inside the 16:9 container.
+          // Compute the rendered image rect so we can map pixel coords correctly.
+          const containerAspect = 16 / 9;
+          const imageAspect = survey.width / survey.height;
+          let imgW, imgH, imgLeft, imgTop;
+          if (imageAspect < containerAspect) {
+            // pillarboxed: image is narrower than container
+            imgH = 100;
+            imgW = (imageAspect / containerAspect) * 100;
+            imgLeft = (100 - imgW) / 2;
+            imgTop = 0;
+          } else {
+            // letterboxed: image is wider than container
+            imgW = 100;
+            imgH = (containerAspect / imageAspect) * 100;
+            imgLeft = 0;
+            imgTop = (100 - imgH) / 2;
+          }
+
+          const left   = imgLeft + (x1 / survey.width)  * imgW;
+          const top    = imgTop  + (y1 / survey.height) * imgH;
+          const width  = Math.max(((x2 - x1) / survey.width)  * imgW, 2);
+          const height = Math.max(((y2 - y1) / survey.height) * imgH, 2);
+
+          return (
+            <button
+              key={target.id}
+              type="button"
+              onClick={() => onTargetClick(target.id)}
+              className={`absolute rounded-xs border-2 border-dashed flex flex-col justify-between text-left pointer-events-auto transition-all ${RISK_BADGE_BORDER(level)}`}
+              style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
+            >
+              <span className={`absolute -top-5 left-0 font-telemetry-sm text-[10px] px-1.5 py-0.5 rounded-xs font-bold uppercase whitespace-nowrap shadow-sm ${RISK_BADGE_LABEL(level)}`}>
+                {(target.debris_subclass || target.classification || 'uncertain')}:{' '}
+                {target.confidence != null ? target.confidence.toFixed(2) : 'n/a'}
+              </span>
+            </button>
+          );
+        })}
+
+      {(!hasImagery || dossiers.length === 0) && (
+        <div className="absolute inset-0 flex items-center justify-center text-on-surface-variant font-body-sm text-body-sm">
+          {dossiers.length === 0 ? 'No non-seabed targets detected.' : 'No pixel dimensions recorded.'}
+        </div>
+      )}
+    </div>
+
+    {/* Footer */}
+    <div className="p-space-md flex items-center justify-between bg-surface-container text-on-surface-variant font-telemetry-sm text-telemetry-sm flex-wrap gap-space-xs">
+      <span>Model: <span className="text-on-surface">{dossiers.length > 0 ? 'e004-unet-shipwreck-segmentation' : 'Not yet run'}</span></span>
+      <span>Threshold: <span className="text-on-surface">sigmoid(logits) &gt; 0.5</span></span>
+      <span>Mask resolution: <span className="text-on-surface">1024x1024</span></span>
+    </div>
+  </div>
+);
 
 const Panel = ({ title, icon, badge, footer, children }) => (
   <div className="flex-1 flex flex-col rounded-DEFAULT bg-surface-container-low overflow-hidden shadow-lg">

@@ -73,10 +73,12 @@ KNOWN_DEBRIS_SUBCLASSES: tuple[str, ...] = (
     "pipe",
     "metal_debris",
     "shipwreck",
+    "rock",
     "other_debris",
     "marine_debris",
     "gear_hardware",
     "other_anthropogenic",
+    "natural_seabed",
     "unknown",
 )
 
