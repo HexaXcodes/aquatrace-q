@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import TargetNotFoundError
@@ -68,6 +68,36 @@ def create_targets_from_detections(db: Session, detections: list[Detection]) -> 
 
     logger.info("targets_created", extra={"count": len(targets)})
     return targets
+
+
+def delete_targets_for_survey(db: Session, survey_id: str) -> int:
+    """Deletes every Target row for `survey_id` -- called by
+    processing_service.run_pipeline() before a (re)run creates a fresh
+    batch, so re-running /process on an already-processed survey replaces
+    its prior targets rather than accumulating a second, duplicate set
+    alongside them (confirmed live: reprocessing without this doubled
+    every downstream count -- detections, targets, risk scores, priority
+    scores, and the survey report itself). See docs/ml-integration.md for
+    the replace-vs-accumulate reasoning.
+
+    A single bulk delete, relying on real `ON DELETE CASCADE` (declared
+    on FeatureVector/ClassificationRecord/EnvironmentContext/RiskScore/
+    PriorityScore/MissionTarget's foreign keys to `targets.id`) to remove
+    everything that hangs off each target -- correct in both Postgres
+    (enforces FKs by default) and SQLite (enforced here too, via
+    app/db/database.py's `PRAGMA foreign_keys=ON`; without that this
+    would silently leave orphaned rows in SQLite dev/tests while
+    genuinely cascading in Postgres, a dev/prod behavior gap this fix
+    closes rather than works around). Does NOT delete `Mission` rows for
+    the survey -- a mission that referenced now-deleted targets loses
+    those stops (via MissionTarget's own cascade) but the Mission row
+    itself is left as real, if now-emptier, history rather than deleted
+    -- out of scope for this fix; noted in docs/ml-integration.md as a
+    known follow-up, not silently patched over here.
+    """
+    result = db.execute(delete(Target).where(Target.survey_id == survey_id))
+    db.commit()
+    return result.rowcount
 
 
 def get_target(db: Session, target_id: str) -> Target:

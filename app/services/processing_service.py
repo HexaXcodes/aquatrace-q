@@ -91,6 +91,27 @@ def run_pipeline(
         db.add(job)
         db.commit()
 
+        # Re-running /process on an already-processed survey replaces its
+        # prior detection/target batch rather than accumulating a second,
+        # duplicate set alongside it -- confirmed live that skipping this
+        # doubles every downstream count (targets, risk scores, priority
+        # scores, the survey report itself) on every reprocess. See
+        # target_service.delete_targets_for_survey()'s docstring for the
+        # full reasoning and what's deliberately left untouched (Mission
+        # rows, ProcessingJob history).
+        deleted_targets = target_service.delete_targets_for_survey(db, survey.id)
+        deleted_detections = detection_service.delete_detections_for_survey(db, survey.id)
+        if deleted_targets or deleted_detections:
+            _log(
+                job,
+                ProcessingJobStatus.PREPROCESSING,
+                "OK",
+                f"Reprocessing: cleared {deleted_detections} prior detection(s) and "
+                f"{deleted_targets} prior target(s) from an earlier run of this survey.",
+            )
+            db.add(job)
+            db.commit()
+
         detections = detection_service.run_detection(db, survey)
         # More than one detection model can contribute to a single survey
         # (see detection_service.run_detection's docstring) -- list every

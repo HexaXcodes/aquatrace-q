@@ -474,6 +474,73 @@ normalization), bump `feature_version` — this lets old classification
 records stay honestly attributed to the feature representation they were
 actually computed from.
 
+## Reprocessing a survey: replaces the prior batch, doesn't accumulate
+
+Re-running `POST /surveys/{id}/process` on an already-processed survey
+(the "Reprocess Survey" button on Target Details, or simply calling
+`/process` twice) used to **double** every count for that survey on each
+run -- confirmed live: 3 detections/targets became 6 after one reprocess,
+6 became 12 after a second, with the survey report's `target_count` and
+every risk/priority score doubling right along with them. Not a cosmetic
+issue: a conservation team re-running a survey (e.g. after a new model
+lands) would see double the real number of debris targets in their
+report, not a refreshed one.
+
+**Decision: replace, not accumulate.** The alternative -- keep every
+run's rows and add a batch/run identifier to tell old and new apart --
+was considered, but would need real supporting infrastructure this
+project doesn't have and nothing has asked for: a batch id threaded
+through `Detection`/`Target`/every downstream table, frontend filtering
+to "latest batch only" for Report/Triage/Priority Map (since showing
+every historical run by default would reproduce the exact doubling
+problem this is meant to fix), and a way to actually view/compare older
+batches if keeping them is to be worth anything at all. `Target`'s own
+docstring already frames it as "the higher-level object every downstream
+stage reasons about" -- a survey's *current* state, not a versioned
+history -- so replace matches the data model this codebase already has,
+rather than adding a second one alongside it.
+
+**Implementation:** `processing_service.run_pipeline()` calls
+`target_service.delete_targets_for_survey()` then
+`detection_service.delete_detections_for_survey()` right after
+PREPROCESSING, before DETECTING creates the new batch -- logged
+explicitly in `stage_log` ("Reprocessing: cleared N prior detection(s)
+and M prior target(s)...") so this is visible, not silent. Deliberately
+**not** touched: `Mission` rows (a mission whose targets get deleted
+loses those stops via cascade, but the Mission row itself is left as
+real history rather than deleted -- a real, minor gap, noted here rather
+than silently patched over) and `ProcessingJob` rows (every run's job
+stays in history on purpose -- it's the audit trail of *when* each
+reprocess happened and what it logged, which is a genuinely different
+thing from the *data* a run produced).
+
+**This surfaced a real dev/prod behavior gap, now fixed underneath it:**
+`delete_targets_for_survey()` is a single bulk delete relying on the
+`ON DELETE CASCADE` already declared on every foreign key pointing at
+`targets.id` (`FeatureVector`, `ClassificationRecord`,
+`EnvironmentContext`, `RiskScore`, `PriorityScore`, `MissionTarget`).
+Postgres enforces that by default; **SQLite silently doesn't**, unless
+told to per-connection -- so this delete would have genuinely cascaded
+in production while quietly leaving orphaned rows behind in every local
+dev/test run, an easy-to-miss and easy-to-reintroduce gap. Fixed at the
+root in `app/db/database.py` (`enable_sqlite_foreign_keys()`, called for
+the app's real engine and, separately, `tests/conftest.py`'s own
+in-memory test engine) rather than worked around with manual per-table
+deletes -- this benefits every future delete in this codebase, not just
+this one. Verified the fix actually closes the gap (not just "no test
+failed"): a dedicated test asserts zero orphaned rows remain in each
+child table after a real cascade delete, and it failed with `3` real
+orphaned `feature_vectors` rows before `conftest.py`'s test engine got
+the same PRAGMA the real engine already had -- i.e. the two engines can
+independently forget this, so both are covered, not just one.
+
+Verified live end-to-end, not just in tests: a real survey already
+doubled to 6 detections/targets by the pre-fix bug was reprocessed again
+after the fix and came back down to the correct 3 -- the fix doesn't
+just prevent *future* duplication, reprocessing self-heals rows a
+pre-fix run had already duplicated. Regression coverage:
+`tests/test_reprocessing.py`.
+
 ## What you should NOT need to touch
 
 `app/api/v1/detections.py`, `targets.py`, `classification.py` -- no API

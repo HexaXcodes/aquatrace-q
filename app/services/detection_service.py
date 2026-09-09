@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AquaTraceError
@@ -87,6 +87,22 @@ def run_detection(db: Session, survey: Survey) -> list[Detection]:
         },
     )
     return detections
+
+
+def delete_detections_for_survey(db: Session, survey_id: str) -> int:
+    """Deletes every Detection row for `survey_id` -- called by
+    processing_service.run_pipeline() before a (re)run creates a fresh
+    batch. Must be called after target_service.delete_targets_for_survey()
+    (targets carry an optional detection_id, ON DELETE SET NULL -- not
+    that ordering strictly matters here, since every target and every
+    detection for this survey are being cleared together either way, but
+    targets-then-detections mirrors the create order and avoids ever
+    having a target point at nothing mid-transaction). See
+    target_service.delete_targets_for_survey()'s docstring for the full
+    replace-vs-accumulate reasoning."""
+    result = db.execute(delete(Detection).where(Detection.survey_id == survey_id))
+    db.commit()
+    return result.rowcount
 
 
 def list_detections(db: Session, survey_id: str) -> list[Detection]:
