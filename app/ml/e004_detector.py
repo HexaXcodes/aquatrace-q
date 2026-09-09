@@ -57,8 +57,8 @@ class E004ShipwreckDetector(DetectionModel):
         self,
         checkpoint_path: Path,
         *,
-        mask_threshold: float = 0.5,
-        min_component_pixels: int = 30,
+        mask_threshold: float = 0.6,
+        min_component_pixels: int = 120,
         max_detections: int = 20,
     ) -> None:
         try:
