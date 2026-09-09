@@ -87,13 +87,12 @@ def get_detection_model() -> DetectionModel:
 @lru_cache
 def get_shipwreck_detection_model() -> DetectionModel | None:
     """Returns the registered shipwreck-specialist detector (E004), or
-    `None` if its checkpoint is absent or torch isn't importable --
-    there's no meaningful fallback for a narrow specialist question like
-    "is this a shipwreck," so unlike `get_detection_model()` this does
-    NOT fall back to `FixtureThresholdDetector`. `detection_service.
-    run_detection()` simply skips this slot when it returns `None`.
+    `None` if disabled via `ENABLE_SHIPWRECK_DETECTOR=False`, its
+    checkpoint is absent, or torch isn't importable.
     """
     settings = get_settings()
+    if not settings.ENABLE_SHIPWRECK_DETECTOR:
+        return None
     checkpoint_path = settings.MODEL_DIRECTORY / _E004_CHECKPOINT_NAME
     if checkpoint_path.exists():
         try:

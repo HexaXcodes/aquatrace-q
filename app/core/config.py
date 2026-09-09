@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     ML_MODEL_VERSION: str | None = None
     QML_ENABLED: bool = True
     QML_FEATURE_DIMENSIONS: int = 4  # PCA target dimensionality before the quantum feature map
+    ENABLE_SHIPWRECK_DETECTOR: bool = False  # Disabled by default for general debris/gear survey triage
 
     # --- Uncertainty (Phase 10) ------------------------------------------------
     UNCERTAINTY_HIGH_THRESHOLD: float = 0.66  # normalized entropy >= this -> HIGH

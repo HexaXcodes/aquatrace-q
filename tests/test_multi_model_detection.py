@@ -51,6 +51,7 @@ def test_run_detection_merges_both_registered_models(client: TestClient, monkeyp
 
     monkeypatch.setitem(Settings.model_config, "env_file", None)
     monkeypatch.setenv("MODEL_DIRECTORY", str(model_dir))
+    monkeypatch.setenv("ENABLE_SHIPWRECK_DETECTOR", "true")
     get_settings.cache_clear()
     reset_registry_cache()
     try:
